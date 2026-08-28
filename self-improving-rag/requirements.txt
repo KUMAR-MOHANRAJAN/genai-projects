@@ -1,0 +1,8 @@
+openai
+tiktoken
+chromadb
+langgraph
+python-dotenv
+numpy
+streamlit
+PyMuPDF

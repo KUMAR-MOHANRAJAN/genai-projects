@@ -1,0 +1,64 @@
+/* Shared lesson styles */
+
+body {
+  font-family: Georgia, "Times New Roman", serif;
+  max-width: 42rem;
+  margin: 3rem auto;
+  padding: 0 1rem;
+  line-height: 1.7;
+  color: #1a1a1a;
+  background: #fafafa;
+}
+
+h1, h2, h3 {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.2;
+  margin-top: 2.5rem;
+  color: #000;
+}
+
+h1 { font-size: 2rem; border-bottom: 2px solid #e0e0e0; padding-bottom: 0.3rem; }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1.2rem; }
+
+code {
+  font-family: "SF Mono", "Fira Code", monospace;
+  font-size: 0.9em;
+  background: #eef;
+  padding: 0.15em 0.3em;
+  border-radius: 3px;
+}
+
+pre {
+  background: #1a1a1a;
+  color: #f0f0f0;
+  padding: 1rem;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+
+blockquote {
+  border-left: 4px solid #ccc;
+  margin: 1.5rem 0;
+  padding: 0.5rem 1rem;
+  color: #555;
+  background: #f0f0f0;
+  border-radius: 0 6px 6px 0;
+}
+
+a { color: #2563eb; }
+a:hover { color: #1d4ed8; }
+
+ul, ol { padding-left: 1.5rem; }
+
+hr {
+  border: none;
+  border-top: 1px solid #e0e0e0;
+  margin: 2rem 0;
+}
