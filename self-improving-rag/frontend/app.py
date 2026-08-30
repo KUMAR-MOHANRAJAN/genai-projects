@@ -144,7 +144,7 @@ if active_tab == "Test Playground":
             ing_doc = st.selectbox(
                 "Document", corpus_files, key="ing_doc"
             )
-            ing_cols = st.columns(3)
+            ing_cols = st.columns(5)
             with ing_cols[0]:
                 ing_chunk_size = st.number_input(
                     "Chunk size", min_value=32, max_value=512, value=256, step=32,
@@ -160,12 +160,25 @@ if active_tab == "Test Playground":
                     "Strategy", ["fixed_size", "recursive_split", "semantic"],
                     key="ing_strategy",
                 )
+            with ing_cols[3]:
+                ing_pages = st.number_input(
+                    "Pages", min_value=1, max_value=600, value=INGEST_PAGES, step=5,
+                    key="ing_pages",
+                    help="Number of pages to ingest from the document.",
+                )
+            with ing_cols[4]:
+                ing_start_page = st.number_input(
+                    "Start page", min_value=1, max_value=600, value=INGEST_START_PAGE, step=1,
+                    key="ing_start_page",
+                    help="1-indexed page to start ingesting from.",
+                )
 
             if st.button("Ingest", type="primary", key="ing_button"):
                 book_path = os.path.join(CORPUS_DIR, ing_doc)
                 with st.status("Ingesting...", expanded=True) as status:
                     st.write(f"File: {ing_doc}")
                     st.write(f"Strategy: {ing_strategy}, Size: {ing_chunk_size}, Overlap: {ing_overlap}")
+                    st.write(f"Pages: {ing_pages} (starting at page {ing_start_page})")
                     try:
                         from ingest import ingest
                         collection_name = ingest(
@@ -173,8 +186,8 @@ if active_tab == "Test Playground":
                             chunk_size=ing_chunk_size,
                             chunk_overlap=ing_overlap,
                             version="g1",
-                            pages=INGEST_PAGES,
-                            start_page=INGEST_START_PAGE,
+                            pages=ing_pages,
+                            start_page=ing_start_page,
                             book_path=book_path,
                         )
                         st.session_state["pg_selected_collection"] = collection_name
