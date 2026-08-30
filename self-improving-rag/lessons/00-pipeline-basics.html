@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 0: Pipeline Basics</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <h1>Lesson 0: Pipeline Basics</h1>
+
+  <h2>Orientation</h2>
+  <p><strong>Why are we learning this?</strong> Before we can build the self-improving loop (eval → diagnose → improve → optimize), we need a pipeline that actually runs end-to-end. Right now you can chunk a book and store it in Chroma. But you can't ask a question and get a scored answer. The agents need a working pipeline to orchestrate.</p>
+  <p><strong>How does it work?</strong> Four steps in sequence: find the right pages → glue them together → read and answer → grade the answer.</p>
+  <p><strong>Input → Output:</strong> A question string → an answer string + a quality score (0.0 to 1.0).</p>
+  <p><strong>What breaks without it?</strong> The self-improving loop has nothing to evaluate. You can't diagnose a pipeline that doesn't run.</p>
+
+  <p class="prereq">Start here | <a href="01-chunking-strategies.html">Lesson 1 (Chunking) →</a></p>
+
+  <hr>
+
+  <h2>1. The Four Steps</h2>
+
+  <h3>Step 1: Retrieval (search.py)</h3>
+
+  <p><strong>Context card:</strong></p>
+  <table>
+    <tr><td>What it is</td><td>Embed the query, search Chroma, return top-k chunks ranked by similarity</td></tr>
+    <tr><td>Problem solved</td><td>"Which pages in the book contain the answer?"</td></tr>
+    <tr><td>Input → Output</td><td>"How do embeddings work?" → [{text, score, metadata}, ...]</td></tr>
+    <tr><td>Owns</td><td>Query embedding, Chroma search, chunk ranking</td></tr>
+    <tr><td>Does NOT own</td><td>Chunking, answer generation, evaluation</td></tr>
+  </table>
+
+  <pre><code># search(query="How do embeddings work?", k=3)
+# → [
+#     {"chunk_id": "fixed_book_0042", "text": "Embeddings map text to vectors...",
+#      "score": 0.87, "metadata": {"source": "book.txt", "chunk_index": 42}},
+#     {"chunk_id": "fixed_book_0108", "text": "Vector similarity measures...",
+#      "score": 0.72, "metadata": {"source": "book.txt", "chunk_index": 108}},
+#     {"chunk_id": "fixed_book_0015", "text": "The embedding model learns...",
+#      "score": 0.65, "metadata": {"source": "book.txt", "chunk_index": 15}}
+#   ]</code></pre>
+
+  <h3>Step 2: Context Assembly (context_assembly.py)</h3>
+
+  <p><strong>Context card:</strong></p>
+  <table>
+    <tr><td>What it is</td><td>Pack retrieved chunks into one string within the LLM's token budget</td></tr>
+    <tr><td>Problem solved</td><td>"How much of the retrieved context can the LLM actually read?"</td></tr>
+    <tr><td>Input → Output</td><td>[chunk1, chunk2, chunk3] → "chunk1\n\nchunk2\n\nchunk3" (≤4000 tokens)</td></tr>
+    <tr><td>Owns</td><td>Token counting (tiktoken), greedy fill by score, truncation</td></tr>
+    <tr><td>Does NOT own</td><td>Retrieval, generation, evaluation</td></tr>
+  </table>
+
+  <pre><code># assemble_context(chunks, max_tokens=4000)
+# BEFORE:  [
+#   {"text": "Embeddings map text...", "score": 0.87},  # 200 tokens
+#   {"text": "Vector similarity...", "score": 0.72},     # 150 tokens
+#   {"text": "The embedding model...", "score": 0.65}    # 180 tokens
+# ]
+# AFTER:   "Embeddings map text...\n\nVector similarity...\n\nThe embedding model..."
+#          (530 tokens total — fits within 4000 budget, all 3 chunks included)</code></pre>
+
+  <p><strong>Greedy fill:</strong> Sort chunks by score (highest first). Add chunks one by one until adding the next would exceed <code>max_tokens</code>. Stop. This is the same pattern AutoRAG's compressor uses.</p>
+
+  <h3>Step 3: Generation (generator.py)</h3>
+
+  <p><strong>Context card:</strong></p>
+  <table>
+    <tr><td>What it is</td><td>Call the LLM with a prompt containing the assembled context + the question</td></tr>
+    <tr><td>Problem solved</td><td>"Given these pages, what's the answer?"</td></tr>
+    <tr><td>Input → Output</td><td>(context, question) → "Embeddings represent meaning by..."</td></tr>
+    <tr><td>Owns</td><td>LLM API call, prompt rendering, response parsing</td></tr>
+    <tr><td>Does NOT own</td><td>Retrieval, evaluation, chunking</td></tr>
+  </table>
+
+  <pre><code># SYSTEM_PROMPT (from prompts.py):
+# "You are a precise document Q&A assistant.
+#  Answer based ONLY on the Context above.
+#  If the Context does not contain enough information, respond:
+#  'I don't have enough information in the provided context to answer this question.'
+#  Be concise, accurate, and grounded."
+
+# generate(context="Embeddings map text to vectors...", question="How do embeddings work?")
+# → "Embeddings represent meaning by mapping words or sentences into dense numerical
+#    vectors where semantically similar texts have similar vector representations."
+#    (cost: $0.0003, tokens: 180 input + 45 output, latency: 420ms)</code></pre>
+
+  <h3>Step 4: Ground Truth (ground_truth.py)</h3>
+
+  <p><strong>Context card:</strong></p>
+  <table>
+    <tr><td>What it is</td><td>A list of test queries with expected answers and relevant keywords</td></tr>
+    <tr><td>Problem solved</td><td>"How do we know if the pipeline's answer is actually correct?"</td></tr>
+    <tr><td>Input → Output</td><td>None → [(question, expected_answer, keywords), ...]</td></tr>
+    <tr><td>Owns</td><td>Test query definitions, expected answers, keyword sets for retrieval scoring</td></tr>
+    <tr><td>Does NOT own</td><td>Running evaluations, scoring, the pipeline itself</td></tr>
+  </table>
+
+  <pre><code># TEST_QUERIES (6 queries against the Hands-On LLMs book):
+TEST_QUERIES = [
+    ("How do embeddings represent meaning?",
+     "Embeddings map text to dense vectors where semantically similar texts have similar representations.",
+     ["embedding", "vector", "semantic", "similarity"]),
+
+    ("What is the attention mechanism?",
+     "Attention weighs the importance of each token relative to all other tokens in the sequence.",
+     ["attention", "token", "weight", "sequence"]),
+
+    ("What is a transformer?",
+     "A neural network architecture that uses self-attention to process sequences in parallel.",
+     ["transformer", "attention", "parallel", "sequence"]),
+
+    ("What is tokenization?",
+     "Tokenization splits text into smaller units (tokens) that the model can process.",
+     ["token", "split", "text", "unit"]),
+
+    ("What is a context window?",
+     "The maximum number of tokens the model can process in a single forward pass.",
+     ["context", "window", "token", "maximum"]),
+
+    ("What is fine-tuning?",
+     "Fine-tuning adapts a pre-trained model to a specific task by training on domain-specific data.",
+     ["fine-tuning", "pre-trained", "task", "data"]),
+]</code></pre>
+
+  <hr>
+
+  <h2>2. The Full Pipeline Flow</h2>
+
+  <pre><code>run_pipeline(question="How do embeddings work?", config=DEFAULT_CONFIG)
+
+  BEFORE:  question = "How do embeddings work?"
+           config   = {chunk_strategy: "fixed_size", chunk_size: 256, k: 5, ...}
+
+  Step 1:  search()      → embed query → Chroma → 5 chunks with scores
+  Step 2:  assemble()    → pack chunks into one string (≤4000 tokens)
+  Step 3:  generate()    → LLM call → answer string
+  Step 4:  score()       → compare answer to ground truth → unified_score
+
+  AFTER:   {
+             "answer": "Embeddings represent meaning by mapping...",
+             "unified_score": 0.72,
+             "faithfulness": 0.81,
+             "relevance": 0.75,
+             "retrieval_score": 0.68,
+             "latency_ms": 1200,
+             "cost_usd": 0.0004,
+             "retrieved_chunks": 5,
+             "context_tokens": 530
+           }</code></pre>
+
+  <hr>
+
+  <h2>3. Failure Modes and Debugging</h2>
+
+  <table>
+    <tr><th>Step</th><th>Failure</th><th>Signal</th><th>Debug</th></tr>
+    <tr><td>Retrieval</td><td>No chunks found</td><td>retrieved_chunks = []</td><td>Check collection name, query embedding, book ingested?</td></tr>
+    <tr><td>Retrieval</td><td>All scores &lt; 0.30</td><td>max(chunk.score) &lt; 0.30</td><td>Wrong chunking strategy? Query too specific?</td></tr>
+    <tr><td>Assembly</td><td>Context too long</td><td>context_tokens &gt; max_tokens</td><td>Reduce k or chunk_size. Compressor should truncate.</td></tr>
+    <tr><td>Generation</td><td>LLM refuses to answer</td><td>answer contains "I don't have enough info"</td><td>Context doesn't contain the answer. Check retrieval.</td></tr>
+    <tr><td>Generation</td><td>LLM hallucinates</td><td>faithfulness &lt; 0.50</td><td>Prompt not strict enough? Context too noisy?</td></tr>
+  </table>
+
+  <hr>
+
+  <h2>4. Quiz</h2>
+
+  <ol>
+    <li>What are the four steps of the pipeline, in order?</li>
+    <li>If retrieval returns 5 chunks but the context budget only fits 3, which 3 get included?</li>
+    <li>What happens if the LLM generates an answer that isn't grounded in the context? Which metric catches it?</li>
+    <li>Why do we need ground truth queries? What happens without them?</li>
+    <li>If the unified score is 0.42, which step most likely failed? How would you debug it?</li>
+  </ol>
+
+  <details>
+    <summary>Reveal answers</summary>
+    <ol>
+      <li>Retrieval → Context Assembly → Generation → Evaluation (scoring).</li>
+      <li>The top 3 by score (highest first). The compressor uses greedy fill: sort by score, add until budget is full.</li>
+      <li>The faithfulness metric (LLM judge checks each claim against context). Score drops below 0.50 → veto fires.</li>
+      <li>Ground truth lets us measure correctness (answer vs expected answer). Without it, we can still measure faithfulness and relevance, but not whether the answer is actually right.</li>
+      <li>Most likely retrieval (wrong chunks retrieved) or generation (LLM hallucinated). Debug: check retrieved_chunks scores, check if context contains the answer, check faithfulness score.</li>
+    </ol>
+  </details>
+
+  <hr>
+
+  <p><strong>Follow-up questions?</strong> Ask me anything about this lesson.</p>
+
+  <p><a href="01-chunking-strategies.html">Next: Lesson 1 (Chunking Strategies) →</a></p>
+</body>
+</html>

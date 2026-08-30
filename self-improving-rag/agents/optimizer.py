@@ -3,8 +3,8 @@
 NOT a LangGraph node. Sits outside the graph and dispatches full graph runs
 repeatedly with different configs until a stop condition fires.
 
-This matches the parent project's architecture (dev branch):
-  - OptimizerService is a service layer, not a graph node
+Architecture:
+  - The optimizer is a service layer, not a graph node
   - It dispatches whole-graph runs via the existing entry point
   - The graph is linear (one pass) — the optimizer handles all retry logic
   - Every score is REAL (never fabricated or estimated)
@@ -15,16 +15,13 @@ Flow:
   3. Check stop conditions
   4. If continuing: apply winner's config, loop back to step 1
 
-Stop conditions (same 5 as parent):
+Stop conditions (5 total):
   - target_reached: score >= target (success)
   - blocked_faithfulness: faithfulness < floor (safety)
   - hitl_required: score in gray band (need human)
   - no_candidates: graph produced no improvement candidates
   - no_improvement: 3 consecutive iterations with delta < 0.01 (plateau)
   - max_iterations_reached: exhausted the budget
-
-Origin: AutoRAG's app/services/optimizer_service.py (dev branch, 635 lines)
-        Simplified: no database, no MLflow, no async — plain Python.
 """
 
 import sys
@@ -43,6 +40,7 @@ from config import (
     FAITHFULNESS_FLOOR,
     MAX_ITERATIONS,
     NO_IMPROVEMENT_DELTA,
+    validate_config,
 )
 from agents.graph import build_graph
 
@@ -90,6 +88,8 @@ def run_optimization(
     version: str = "v1",
     target_score: float = UNIFIED_TARGET,
     max_iterations: int = MAX_ITERATIONS,
+    baseline_result: dict | None = None,
+    force_continue: bool = False,
 ) -> dict:
     """Run the bounded autonomous optimization loop.
 
@@ -102,6 +102,9 @@ def run_optimization(
         version: Collection version string.
         target_score: Stop when unified_score >= this.
         max_iterations: Maximum number of graph dispatches.
+        baseline_result: Optional pre-computed baseline (from Playground).
+            If provided, skips the first graph invocation and uses this
+            as iteration 0. The optimizer starts improvement at iteration 1.
 
     Returns:
         Report dict with:
@@ -112,7 +115,7 @@ def run_optimization(
           - improvement: final_score - initial_score
           - total_iterations: how many iterations ran
     """
-    current_config = copy.deepcopy(config or DEFAULT_CONFIG)
+    current_config = validate_config(config or DEFAULT_CONFIG)
     iterations = []
     last_score = None
     consecutive_no_improvement = 0
@@ -123,7 +126,73 @@ def run_optimization(
     print(f"  Query: {query[:80]}...")
     print(f"  Target: {target_score}")
     print(f"  Max iterations: {max_iterations}")
+    if baseline_result:
+        print(f"  Baseline: pre-supplied (score={baseline_result.get('unified_score')})")
     print(f"{'=' * 70}")
+
+    # ── Handle pre-supplied baseline ──────────────────────────────────────
+    if baseline_result:
+        score = baseline_result.get("unified_score")
+        faithfulness = baseline_result.get("faithfulness")
+        gate = baseline_result.get("gate_decision", "hard_block")
+
+        print(f"\n── Baseline (from Playground) ──")
+        print(f"  Score: {score:.4f}" if score else "  Score: None")
+        print(f"  Gate:  {gate}")
+        print(f"  Faithfulness: {faithfulness}")
+
+        # Check stop conditions on baseline
+        if faithfulness is not None and faithfulness < FAITHFULNESS_FLOOR:
+            if force_continue:
+                print(f"  WARNING: faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR} (force_continue=True, continuing)")
+            else:
+                record = _iteration_record(0, current_config, baseline_result)
+                iterations.append(record)
+                stop_reason = "blocked_faithfulness"
+                print(f"  STOP: {stop_reason} (faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR})")
+        
+        if stop_reason == "max_iterations_reached" and score is not None and score >= target_score:
+            record = _iteration_record(0, current_config, baseline_result)
+            iterations.append(record)
+            stop_reason = "target_reached"
+            print(f"  STOP: {stop_reason} (score {score:.4f} >= {target_score})")
+        if stop_reason == "max_iterations_reached" and gate == "hitl_required":
+            record = _iteration_record(0, current_config, baseline_result)
+            iterations.append(record)
+            stop_reason = "hitl_required"
+            print(f"  STOP: {stop_reason} (score in gray band, needs human)")
+        
+        if stop_reason == "max_iterations_reached":
+            # Baseline doesn't trigger stop — record it and continue
+            record = _iteration_record(0, current_config, baseline_result)
+            iterations.append(record)
+            last_score = score
+
+        # If we stopped on baseline, skip to report
+        if stop_reason != "max_iterations_reached":
+            # Build report and return early
+            initial_score = iterations[0]["unified_score"] if iterations else None
+            final_score = iterations[-1]["unified_score"] if iterations else None
+            improvement = (
+                round(final_score - initial_score, 4)
+                if initial_score is not None and final_score is not None
+                else None
+            )
+            report = {
+                "stop_reason": stop_reason,
+                "total_iterations": len(iterations),
+                "initial_score": initial_score,
+                "final_score": final_score,
+                "improvement": improvement,
+                "initial_config": config or DEFAULT_CONFIG,
+                "final_config": current_config,
+                "iterations": iterations,
+            }
+            print(f"\n{'=' * 70}")
+            print(f"OPTIMIZER — Loop finished (stopped on baseline)")
+            print(f"  Stop reason: {stop_reason}")
+            print(f"{'=' * 70}\n")
+            return report
 
     for iteration in range(1, max_iterations + 1):
         print(f"\n── Iteration {iteration}/{max_iterations} ──")
@@ -161,11 +230,14 @@ def run_optimization(
 
         # Safety first: faithfulness hard block
         if faithfulness is not None and faithfulness < FAITHFULNESS_FLOOR:
-            record = _iteration_record(iteration, current_config, result)
-            iterations.append(record)
-            stop_reason = "blocked_faithfulness"
-            print(f"  STOP: {stop_reason} (faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR})")
-            break
+            if force_continue:
+                print(f"  WARNING: faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR} (force_continue=True, continuing)")
+            else:
+                record = _iteration_record(iteration, current_config, result)
+                iterations.append(record)
+                stop_reason = "blocked_faithfulness"
+                print(f"  STOP: {stop_reason} (faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR})")
+                break
 
         # Target reached
         if score is not None and score >= target_score:
@@ -227,7 +299,7 @@ def run_optimization(
             print(f"  STOP: {stop_reason} (winner has no config_after)")
             break
 
-        current_config = copy.deepcopy(new_config)
+        current_config = validate_config(new_config)
         print(f"  → Applied. New config for next iteration: "
               f"k={current_config.get('retrieval_k')}, "
               f"chunk={current_config.get('chunk_size')}")

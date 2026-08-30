@@ -22,8 +22,15 @@ env/
 .DS_Store
 Thumbs.db
 
-# Chroma DB data (generated at runtime)
+# Chroma DB data
 data/chroma/
+
+# Corpus (book files)
+corpus/
 
 # Zone.Identifier (Windows)
 *:Zone.Identifier
+
+# Internal planning docs (not for public repo)
+GAP_ANALYSIS.md
+PARENT_PATTERNS.md

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 3: Retrieval</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <h1>Lesson 3: Retrieval</h1>
+
+  <h2>Orientation</h2>
+  <p><strong>Why are we learning this?</strong> Retrieval is the bridge between "I have chunks in a database" and "I found the right chunks for this question." If retrieval fails, everything downstream fails — the LLM gets wrong context, generates a wrong answer, and the evaluator correctly scores it low. The self-improving loop's F-01 diagnosis ("Retrieval Miss") fires when retrieval returns nothing relevant.</p>
+  <p><strong>How does it work?</strong> Embed the query → search Chroma for nearest vectors → return top-k chunks with similarity scores.</p>
+  <p><strong>Input → Output:</strong> <code>("How do embeddings work?", k=5)</code> → <code>[{chunk_id, text, score, metadata}, ...]</code> sorted by score descending.</p>
+  <p><strong>What breaks without it?</strong> No retrieval = no context for the LLM = no answer. Or bad retrieval = wrong context = hallucination.</p>
+
+  <p class="prereq">← <a href="02-embeddings.html">Lesson 2 (Embeddings)</a> | <a href="04-generation.html">Lesson 4 (Generation) →</a></p>
+
+  <hr>
+
+  <h2>1. Retrieval</h2>
+
+  <h3>Context Card</h3>
+  <table>
+    <tr><td>What it is</td><td>Embed the query, search Chroma by cosine similarity, return top-k chunks</td></tr>
+    <tr><td>Problem solved</td><td>"Which chunks in the database are most relevant to this question?"</td></tr>
+    <tr><td>Input → Output</td><td><code>(collection, "How do embeddings work?", k=5)</code> → 5 chunks with scores</td></tr>
+    <tr><td>Owns</td><td>Query embedding, Chroma search, result normalization</td></tr>
+    <tr><td>Does NOT own</td><td>Chunking, context assembly, answer generation, evaluation</td></tr>
+  </table>
+
+  <h3>How It Works</h3>
+
+  <pre><code>from retrieval import search
+
+chunks = search("rag_v1_fixed_256", "How do embeddings work?", k=3)
+
+print(len(chunks))
+# → 3
+
+print(chunks[0])
+# → {
+#     "chunk_id": "fixed_book_0042",
+#     "text": "Embeddings map text to dense numerical vectors...",
+#     "score": 0.87,
+#     "metadata": {"source": "book.txt", "chunk_index": 42}
+#   }
+
+print([c["score"] for c in chunks])
+# → [0.87, 0.72, 0.65]  (sorted descending)</code></pre>
+
+  <h3>State Map</h3>
+  <pre><code>BEFORE:  query = "How do embeddings work?"
+         collection = "rag_v1_fixed_256" (contains 100 chunk embeddings)
+         ↓ EmbeddingClient.embed([query]) → query vector (256 floats)
+         ↓ ChromaStore.query(query_vec, k=3)
+         ↓ Chroma computes cosine distance to all 100 stored embeddings
+         ↓ returns top-3: {ids, documents, distances, metadatas}
+         ↓ Normalize: distance → score (1 - distance), flatten to list of dicts
+AFTER:   [
+           {"chunk_id": "fixed_book_0042", "text": "...", "score": 0.87, "metadata": {...}},
+           {"chunk_id": "fixed_book_0108", "text": "...", "score": 0.72, "metadata": {...}},
+           {"chunk_id": "fixed_book_0015", "text": "...", "score": 0.65, "metadata": {...}}
+         ]</code></pre>
+
+  <h3>Score = 1 - Distance</h3>
+
+  <p>Chroma returns <strong>cosine distance</strong> (lower = more similar). We convert to <strong>similarity score</strong> (higher = more similar):</p>
+
+  <pre><code>distance = 0.12  →  score = 1 - 0.12 = 0.88  (very similar)
+distance = 0.50  →  score = 1 - 0.50 = 0.50  (moderately similar)
+distance = 0.90  →  score = 1 - 0.90 = 0.10  (barely related)</code></pre>
+
+  <p>This makes scores intuitive: 1.0 = perfect match, 0.0 = no match. The diagnoser's F-01 trigger checks if <code>max(chunk.score) &lt; 0.30</code> — meaning even the best match is weak.</p>
+
+  <h3>ML/DL Intuition</h3>
+  <p>Cosine distance measures the angle between two vectors, not their magnitude. Two vectors pointing in the same direction have cosine distance 0 (perfect similarity), even if one is much longer. This is ideal for text: a short chunk and a long chunk about the same topic will have similar vectors regardless of length. Euclidean distance would penalize length differences unfairly.</p>
+
+  <h3>Failure Modes and Debugging</h3>
+  <table>
+    <tr><th>Failure</th><th>Signal</th><th>Debug</th></tr>
+    <tr><td>Collection doesn't exist</td><td>Chroma error on query</td><td>Check collection name. Was ingestion run for this version?</td></tr>
+    <tr><td>No chunks found</td><td><code>results["ids"][0] = []</code></td><td>Collection empty? Check <code>store.count()</code></td></tr>
+    <tr><td>All scores &lt; 0.30</td><td><code>max(c["score"] for c in chunks) &lt; 0.30</code></td><td>Wrong chunking strategy? Query too specific? Embedding model mismatch?</td></tr>
+    <tr><td>Wrong chunks returned</td><td>Chunk text unrelated to query</td><td>Check: are chunks too large (smearing topics)? Too small (fragmentary)?</td></tr>
+  </table>
+
+  <hr>
+
+  <h2>2. Keyword-Based Retrieval Scoring</h2>
+
+  <p>To measure retrieval quality (precision@k, recall@k), we need to know which chunks are "relevant." Since chunk IDs change with every config version, we use <strong>keywords</strong> from ground truth:</p>
+
+  <pre><code># Ground truth query:
+("How do embeddings work?", "...", ["embedding", "vector", "semantic", "similarity"])
+
+# Retrieved chunks:
+[{"text": "Embeddings map text to vectors...", "score": 0.87},
+ {"text": "The stock market crashed today.", "score": 0.15}]
+
+# Check each chunk for keyword matches:
+# Chunk 0: contains "embeddings" + "vectors" → RELEVANT ✓
+# Chunk 1: contains none → NOT RELEVANT ✗
+
+# precision@5 = 1/5 = 0.20 (1 relevant out of 5 retrieved)</code></pre>
+
+  <p>This is strategy-agnostic — the same keywords work across fixed_size, recursive_split, and semantic chunking. The self-improving loop compares <em>relative</em> performance (v1 vs v2 vs v3), not absolute precision.</p>
+
+  <hr>
+
+  <h2>Quiz</h2>
+
+  <ol>
+    <li>What does <code>search(collection, query, k=5)</code> return?</li>
+    <li>Why do we convert distance to score (1 - distance)?</li>
+    <li>If all 5 retrieved chunks have score &lt; 0.30, which diagnosis fires?</li>
+    <li>Why do we use cosine distance instead of Euclidean distance?</li>
+    <li>How does keyword-based retrieval scoring work, and why not use chunk IDs?</li>
+  </ol>
+
+  <details>
+    <summary>Reveal answers</summary>
+    <ol>
+      <li>A list of k dicts, each with <code>chunk_id</code>, <code>text</code>, <code>score</code>, and <code>metadata</code>, sorted by score descending.</li>
+      <li>Chroma returns cosine distance (lower = more similar). Converting to 1 - distance gives a similarity score (higher = more similar), which is more intuitive: 1.0 = perfect match.</li>
+      <li>F-01 Retrieval Miss — the retrieval system found nothing relevant. The improver will try increasing k, switching chunking strategy, or adding overlap.</li>
+      <li>Cosine distance measures angle (direction), not magnitude. Two texts about the same topic have similar vectors regardless of length. Euclidean distance would penalize length differences, unfairly ranking short chunks higher.</li>
+      <li>Each ground truth query has keywords. A retrieved chunk is "relevant" if its text contains at least one keyword. We use keywords instead of chunk IDs because IDs change with every config version — keywords are strategy-agnostic and work across all versions.</li>
+    </ol>
+  </details>
+
+  <hr>
+
+  <p><strong>Follow-up questions?</strong> Ask me anything about this lesson.</p>
+
+  <p><a href="02-embeddings.html">← Lesson 2 (Embeddings)</a> | <a href="04-generation.html">Next: Lesson 4 (Generation) →</a></p>
+</body>
+</html>

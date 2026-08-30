@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 2: Embeddings & Vector Store</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <h1>Lesson 2: Embeddings & Vector Store</h1>
+
+  <h2>Orientation</h2>
+  <p><strong>Why are we learning this?</strong> Chunking is useless without embeddings — a chunk's embedding is its fingerprint in vector space. The vector store (Chroma) is where those fingerprints live and where retrieval searches against them. The self-improving loop creates a <em>new collection per config version</em>, so understanding how embeddings and collections work is essential to understanding version isolation.</p>
+  <p><strong>How does it work?</strong> Text → embedding model → 256-dimensional vector → stored in Chroma collection → query embedding → cosine search → top-k matches.</p>
+  <p><strong>Input → Output:</strong> <code>["hello world"]</code> → <code>[0.12, -0.03, 0.45, ...]</code> (256 floats) → stored in Chroma → retrieved by similarity search.</p>
+  <p><strong>What breaks without it?</strong> No embeddings = no vector search = no retrieval = no RAG. The pipeline stops at chunking.</p>
+
+  <p class="prereq">← <a href="01-chunking-strategies.html">Lesson 1 (Chunking)</a> | <a href="03-retrieval.html">Lesson 3 (Retrieval) →</a></p>
+
+  <hr>
+
+  <h2>1. Embeddings</h2>
+
+  <h3>Context Card</h3>
+  <table>
+    <tr><td>What it is</td><td>A function that maps text to a dense vector (list of floats)</td></tr>
+    <tr><td>Problem solved</td><td>"How do we represent text so a computer can compare meaning?"</td></tr>
+    <tr><td>Input → Output</td><td><code>["hello world"]</code> → <code>[0.12, -0.03, 0.45, ..., 0.08]</code> (256 floats)</td></tr>
+    <tr><td>Owns</td><td>Calling the embedding API, returning vectors</td></tr>
+    <tr><td>Does NOT own</td><td>Chunking, storage, search</td></tr>
+  </table>
+
+  <h3>How It Works</h3>
+
+  <p>We use the EURI API (OpenAI-compatible) with <code>text-embedding-3-small</code> at 256 dimensions:</p>
+
+  <pre><code>from embeddings import EmbeddingClient
+
+client = EmbeddingClient()  # uses EURI API, text-embedding-3-small, 256 dims
+
+vecs = client.embed(["hello world", "goodbye world"])
+print(len(vecs))
+# → 2
+
+print(len(vecs[0]))
+# → 256
+
+print(vecs[0][:5])
+# → [0.012, -0.034, 0.089, 0.156, -0.021]</code></pre>
+
+  <h3>State Map</h3>
+  <pre><code>BEFORE:  ["hello world", "goodbye world"]  (2 strings, raw text)
+         ↓ EmbeddingClient.embed() → EURI API call
+         ↓ API returns 256-dimensional vectors per string
+AFTER:   [[0.012, -0.034, 0.089, ...],   # "hello world"
+          [-0.045, 0.067, 0.112, ...]]   # "goodbye world"
+         (each vector is a point in 256D space)</code></pre>
+
+  <p><strong>Production note:</strong> If you have more than 2048 inputs, you need to chunk the list into batches of 2048 and call <code>embed()</code> multiple times. Our semantic chunker does this implicitly because a single document rarely has more than ~500 sentences.</p>
+
+  <h3>ML/DL Intuition</h3>
+  <p>An embedding model is a neural network trained to put semantically similar texts close together in vector space. "hello world" and "hi there" will have vectors with high cosine similarity (~0.85). "hello world" and "the stock market crashed" will be far apart (~0.15). The 256 dimensions are learned features — not human-interpretable, but collectively they encode meaning, syntax, and context.</p>
+
+  <h3>Why 256 dimensions?</h3>
+  <p>OpenAI's <code>text-embedding-3-small</code> supports up to 3072 dimensions. We use 256 because: (1) smaller = faster storage and search, (2) for chunk-level retrieval, 256 dims captures enough signal, (3) cost is lower. This is a config knob in <code>config.py</code>.</p>
+
+  <h3>Failure Modes</h3>
+  <table>
+    <tr><th>Failure</th><th>Signal</th><th>Debug</th></tr>
+    <tr><td>API key invalid</td><td><code>AuthenticationError</code></td><td>Check <code>.env</code>, <code>EURI_API_KEY</code></td></tr>
+    <tr><td>Rate limited</td><td><code>RateLimitError</code></td><td>Batch calls, add retry with backoff</td></tr>
+    <tr><td>Empty input</td><td>API returns empty or errors</td><td>Filter empty strings before embedding</td></tr>
+  </table>
+
+  <hr>
+
+  <h2>2. Chroma Vector Store</h2>
+
+  <h3>Context Card</h3>
+  <table>
+    <tr><td>What it is</td><td>A local vector database that stores embeddings and supports similarity search</td></tr>
+    <tr><td>Problem solved</td><td>"Given a query embedding, which stored chunk embeddings are most similar?"</td></tr>
+    <tr><td>Input → Output</td><td><code>query(query_vec, k=5)</code> → <code>{documents, distances, metadatas, ids}</code></td></tr>
+    <tr><td>Owns</td><td>Collection creation, upsert, query, count, delete</td></tr>
+    <tr><td>Does NOT own</td><td>Embedding generation, chunking, ranking logic</td></tr>
+  </table>
+
+  <h3>Versioned Collections</h3>
+
+  <p>Each config version gets its <strong>own collection</strong>. This is the version isolation pattern:</p>
+
+  <pre><code>rag_v1_fixed_256       ← baseline: fixed_size, chunk_size=256
+rag_v2_recursive_512   ← trial 1: recursive_split, chunk_size=512
+rag_v3_semantic_0.5    ← trial 2: semantic, threshold=0.5</code></pre>
+
+  <p>When the optimizer applies a new config, it creates a new collection, re-chunks, re-embeds, and searches against that. Old collections stay on disk — that's the <em>immutable version</em> concept. You can delete them later for cleanup.</p>
+
+  <h3>How It Works</h3>
+
+  <pre><code>from vector_store import ChromaStore
+
+# Create a versioned collection
+store = ChromaStore("rag_v1_fixed_256")
+
+# Upsert chunks (IDs, embeddings, metadata, text)
+store.upsert(
+    ids=["chunk_000", "chunk_001", "chunk_002"],
+    embeddings=[[0.1, ...], [0.2, ...], [0.3, ...]],
+    metadatas=[{"source": "book.txt", "chunk_index": 0}, ...],
+    documents=["Embeddings map text...", "Vector similarity...", ...]
+)
+
+print(store.count())
+# → 3
+
+# Query: find top-2 most similar chunks to this query vector
+results = store.query(query_embedding=[0.15, ...], k=2)
+print(results["documents"])
+# → [["Embeddings map text...", "Vector similarity..."]]
+print(results["distances"])
+# → [[0.12, 0.28]]  (cosine distance — lower = more similar)</code></pre>
+
+  <h3>State Map</h3>
+  <pre><code>BEFORE:  Empty collection "rag_v1_fixed_256"
+         ↓ upsert(ids, embeddings, metadatas, documents)
+         ↓ Chroma stores: id→embedding, id→metadata, id→document
+AFTER:   Collection contains 3 chunks, each with:
+         - embedding (256D vector)
+         - metadata {"source": "book.txt", "chunk_index": N}
+         - document text (the actual chunk string)
+         ↓ query(query_vec, k=2)
+         ↓ Chroma computes cosine distance to all 3 embeddings
+         ↓ returns top-2 sorted by distance (lowest first)
+RESULT:  {documents: [...], distances: [0.12, 0.28], metadatas: [...], ids: [...]}</code></pre>
+
+  <h3>ML/DL Intuition</h3>
+  <p>Chroma uses HNSW (Hierarchical Navigable Small World) for approximate nearest neighbor search. Instead of comparing the query to every single embedding (O(n)), HNSW builds a graph of connections between vectors and navigates it efficiently. The <code>hnsw:space: cosine</code> metadata tells Chroma to use cosine distance. This is why retrieval is fast even with thousands of chunks.</p>
+
+  <h3>Failure Modes</h3>
+  <table>
+    <tr><th>Failure</th><th>Signal</th><th>Debug</th></tr>
+    <tr><td>Collection name collision</td><td>Old data mixed with new</td><td>Use versioned names: <code>rag_v{N}_{strategy}_{size}</code></td></tr>
+    <tr><td>Dimension mismatch</td><td>Chroma rejects upsert</td><td>All embeddings must be same dimension (256)</td></tr>
+    <tr><td>Disk full</td><td>Chroma write fails</td><td>Clean old collections from <code>data/chroma/</code></td></tr>
+  </table>
+
+  <hr>
+
+  <h2>3. Tradeoff Analysis</h2>
+
+  <table>
+    <tr><th>Design</th><th>Why</th><th>Alternative</th><th>Tradeoff</th></tr>
+    <tr><td>EURI API (not local)</td><td>Same model as generation, consistent vectors</td><td>SentenceTransformers (local, free)</td><td>API costs vs. local RAM/CPU. API = 256 dims, local MiniLM = 384 dims (incompatible)</td></tr>
+    <tr><td>One collection per version</td><td>Version isolation, safe trials</td><td>Single collection with metadata tags</td><td>More disk usage vs. simpler management. Isolation wins for correctness</td></tr>
+    <tr><td>256 dimensions</td><td>Fast, cheap, sufficient for chunk retrieval</td><td>3072 dims (max for this model)</td><td>Lower precision vs. higher cost. 256 is the sweet spot for RAG chunks</td></tr>
+  </table>
+
+  <h3>Retrieval Scoring with Keywords</h3>
+
+  <p>When we evaluate retrieval quality (precision@k, recall@k), we need to know which chunks are "relevant." In production systems with curated golden datasets, this is done with exact chunk IDs. But in our project, chunk IDs change with every config version:</p>
+
+  <pre><code>Query: "How do embeddings work?"
+  fixed_size v1 → relevant IDs: ["fixed_book_0042", "fixed_book_0108"]
+  recursive v2  → relevant IDs: ["recursive_book_0015", "recursive_book_0033"]
+  semantic v3   → relevant IDs: ["semantic_book_0007", "semantic_book_0019"]</code></pre>
+
+  <p>Instead, we use <strong>keyword-based scoring</strong>: each ground truth query comes with keywords. A retrieved chunk is "relevant" if it contains at least one keyword. This is strategy-agnostic — the same keywords work across all chunking strategies and versions.</p>
+
+  <pre><code># Ground truth: ("How do embeddings work?", "...", ["embedding", "vector", "semantic"])
+# Retrieved chunks: [{"text": "Embeddings map text to vectors...", "score": 0.87}, ...]
+# Check: does chunk text contain any keyword?
+# → chunk 0: contains "embeddings" + "vectors" → RELEVANT
+# → chunk 1: contains neither → NOT RELEVANT
+# precision@5 = relevant_chunks / 5</code></pre>
+
+  <p>This is sufficient for the self-improving loop because we compare <em>relative</em> performance (v1 vs v2 vs v3), not absolute precision. The same keywords are used for all versions — fair comparison.</p>
+
+  <hr>
+
+  <h2>Quiz</h2>
+
+  <ol>
+    <li>What does the EmbeddingClient return for a list of 5 strings?</li>
+    <li>Why does each optimizer trial get its own Chroma collection?</li>
+    <li>What does <code>hnsw:space: cosine</code> mean in the collection metadata?</li>
+    <li>If you upsert 100 chunks and query with k=5, how many results do you get?</li>
+    <li>What happens if you try to upsert a 384-dim vector into a collection that already has 256-dim vectors?</li>
+  </ol>
+
+  <details>
+    <summary>Reveal answers</summary>
+    <ol>
+      <li>A list of 5 vectors, each 256 floats: <code>[[...], [...], [...], [...], [...]]</code></li>
+      <li>Version isolation — each config version's chunks are separate. Trials don't pollute each other. Rollback is just "use the old collection."</li>
+      <li>Chroma should use cosine distance (angle between vectors) for similarity, not Euclidean (L2) or dot product. Cosine is standard for text embeddings.</li>
+      <li>Exactly 5 (or fewer if the collection has fewer than 5 chunks). k is the max results.</li>
+      <li>Chroma will reject the upsert with a dimension mismatch error. All embeddings in a collection must have the same dimensionality.</li>
+    </ol>
+  </details>
+
+  <hr>
+
+  <p><strong>Follow-up questions?</strong> Ask me anything about this lesson.</p>
+
+  <p><a href="01-chunking-strategies.html">← Lesson 1 (Chunking)</a> | <a href="03-retrieval.html">Next: Lesson 3 (Retrieval) →</a></p>
+</body>
+</html>

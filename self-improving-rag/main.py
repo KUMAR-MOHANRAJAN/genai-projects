@@ -9,6 +9,7 @@ Usage:
 import sys
 from config import DEFAULT_CONFIG
 from pipeline import run_pipeline
+from utils import build_collection_name
 
 DEFAULT_QUERY = "How do embeddings represent meaning?"
 
@@ -21,7 +22,7 @@ def main():
     chunk_size = config.get("chunk_size", 256)
     k = config.get("retrieval_k", 5)
     version = "v1"
-    collection_name = f"rag_{version}_{strategy}_{chunk_size}"
+    collection_name = build_collection_name(config, version)
 
     print("=" * 50)
     print("  Self-Improving RAG")

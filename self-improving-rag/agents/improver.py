@@ -13,27 +13,26 @@ Design decisions:
     optimizer can see the full history of what was tried.
   - _apply_delta() clamps values to sane bounds.
 
-Smarter alternatives (not implemented — documented for interview reference):
-  1. LLM-assisted variant suggestion (parent's primary path):
+Smarter alternatives (not implemented — documented for reference):
+  1. LLM-assisted variant suggestion:
      Ask the LLM "given these metrics and failure type, propose a config change."
      Pros: can discover novel fixes beyond the playbook, adapts to edge cases.
      Cons: adds latency + cost per retry, non-deterministic (same failure may
      get different fixes on different runs), harder to test/debug.
-     Parent's spec lists this as primary with rule-based as fallback.
 
   2. Historical learning:
      Track which deltas worked for which failure types across past runs.
      Prioritize deltas with higher historical success rates.
-     Requires a run history database (MLflow/PostgreSQL in parent).
+     Requires a run history database (e.g., MLflow or PostgreSQL).
      Pros: improves over time, data-driven.
      Cons: cold-start problem (no history = no signal), requires infra.
 
-  Our project uses the deterministic playbook (parent's fallback path) because
-  it's transparent, testable, free, and sufficient for learning. In production,
-  you'd layer LLM suggestions on top with the playbook as fallback.
+  This project uses the deterministic playbook because it's transparent,
+  testable, free, and sufficient for demonstrating the self-improvement loop.
+  In production, you'd layer LLM suggestions on top with the playbook as
+  fallback.
 
-Origin: AutoRAG's .claude/specs/agents/08-improver.md
-        Variant generation strategy table (failure type → knobs to tune)
+Architecture: Deterministic playbook-based config improvement.
 """
 
 import sys
@@ -107,24 +106,24 @@ _PLAYBOOK: dict[str, list[dict]] = {
     ],
 
     # F-03 Hallucination — model made up facts not in context
-    # Strategy: stricter grounding instructions, less noise
+    # Strategy: stricter grounding instructions + better retrieval for grounding
     "F-03": [
-        {   # Attempt 0: switch to stricter prompt
-            "delta": {"prompt_template": "v2"},
-            "rationale": "Switch to prompt v2 with stricter grounding ('every claim MUST be supported').",
+        {   # Attempt 0: switch to stricter prompt + more retrieval for grounding
+            "delta": {"prompt_template": "v2", "retrieval_k": +2},
+            "rationale": "Switch to prompt v2 with stricter grounding + retrieve more chunks for better coverage.",
         },
-        {   # Attempt 1: stricter prompt + less noise
-            "delta": {"prompt_template": "v2", "chunk_size": -64},
-            "rationale": "Stricter prompt + smaller chunks to reduce noise the model could hallucinate from.",
+        {   # Attempt 1: stricter prompt + bigger chunks for more context per chunk
+            "delta": {"prompt_template": "v2", "chunk_size": +64, "chunk_overlap": +32},
+            "rationale": "Stricter prompt + larger overlapping chunks to provide more coherent context for grounding.",
         },
-        {   # Attempt 2: stricter prompt + more overlap for coherence
-            "delta": {"prompt_template": "v2", "chunk_overlap": +32, "retrieval_k": -1},
-            "rationale": "Stricter prompt + overlapping chunks for better context continuity + fewer chunks to reduce noise.",
+        {   # Attempt 2: aggressive — more retrieval + bigger chunks + overlap
+            "delta": {"prompt_template": "v2", "retrieval_k": +3, "chunk_size": +128, "chunk_overlap": +32},
+            "rationale": "Aggressive grounding fix: stricter prompt + much more context for the model to ground claims.",
         },
     ],
 
-    # F-04 Answer Incomplete — answer is correct but missing key details
-    # Strategy: give the model more content to work with
+    # F-04 Answer Incomplete — response is partial or abstained despite context
+    # Strategy: first give the model more content to work with
     "F-04": [
         {   # Attempt 0: retrieve more chunks
             "delta": {"retrieval_k": +2},

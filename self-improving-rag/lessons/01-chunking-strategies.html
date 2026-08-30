@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 1: Chunking Strategies</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <h1>Lesson 1: Chunking Strategies</h1>
+
+  <h2>Orientation</h2>
+  <p><strong>Why are we learning this?</strong> Chunking is the single highest-leverage knob in a RAG pipeline. Change chunk size by 100 tokens and retrieval quality can swing 30%. The self-improving loop you'll build later diagnoses chunking failures (F-01 retrieval miss, F-02 overflow, F-03 hallucination) and proposes config deltas. You can't understand the loop without understanding what each chunker does.</p>
+  <p><strong>How does it work?</strong> Split a document into smaller pieces. Each piece gets its own embedding. Retrieval matches the query against chunk embeddings, not whole documents.</p>
+  <p><strong>Input → Output:</strong> One long text string → list of shorter text strings (chunks).</p>
+  <p><strong>What breaks without it?</strong> Embedding an entire book gives one vector that matches everything equally — retrieval is useless. No chunks, no search, no RAG.</p>
+
+  <p class="prereq">← <a href="00-pipeline-basics.html">Lesson 0 (Pipeline Basics)</a> | <a href="02-embeddings.html">Lesson 2 (Embeddings) →</a></p>
+
+  <hr>
+
+  <h2>1. Why Chunking Matters</h2>
+
+  <p>You can't embed an entire 500-page book as one vector. Even if you could, retrieval would be useless — a query about "tax deductions" would match the whole book equally.</p>
+
+  <p>Chunking breaks documents into smaller units. <strong>Each chunk gets its own embedding</strong>, and retrieval returns the most relevant chunks rather than whole documents.</p>
+
+  <table>
+    <tr>
+      <th></th>
+      <th>Small chunks (~128 tokens)</th>
+      <th>Large chunks (~1024 tokens)</th>
+    </tr>
+    <tr>
+      <td><strong>Precision</strong></td>
+      <td>High — hits the exact passage</td>
+      <td>Low — includes surrounding noise</td>
+    </tr>
+    <tr>
+      <td><strong>Recall</strong></td>
+      <td>Low — may miss broader context</td>
+      <td>High — captures surrounding context</td>
+    </tr>
+    <tr>
+      <td><strong>Semantic usefulness</strong></td>
+      <td>May be too fragmentary to answer</td>
+      <td>Self-contained, more likely to answer</td>
+    </tr>
+  </table>
+
+  <hr>
+
+  <h2>2. The Three Strategies We Use</h2>
+
+  <h3>2A. Fixed-Size Token Chunking</h3>
+
+  <p>Split every <em>N</em> tokens using tiktoken. With overlap, start each new chunk <em>chunk_size - overlap</em> tokens into the previous one.</p>
+
+  <pre><code>text = "The quick brown fox jumps over the lazy dog. " * 20
+chunks = fixed_size_chunk(text, chunk_size=256, overlap=0)
+print(len(chunks))
+# → 4
+
+print(chunks[0][:80])
+# → "The quick brown fox jumps over the lazy dog. The quick brown fox jumps over..."</code></pre>
+
+  <p><strong>State map:</strong></p>
+  <pre><code>BEFORE:  "The quick brown fox jumps over the lazy dog. " × 20  (one string, ~960 chars)
+         ↓ tiktoken.encode() → [40, 5171, 956, ...]  (token IDs)
+         ↓ slice [0:256], [256:512], [512:768], [768:960]
+AFTER:   [chunk_0 (256 tok), chunk_1 (256 tok), chunk_2 (256 tok), chunk_3 (192 tok)]</code></pre>
+
+  <p><strong>Pros:</strong> Simple, predictable, fast. No embedding calls needed.<br>
+  <strong>Cons:</strong> Cuts sentences mid-thought. Blind to meaning.</p>
+
+  <p><strong>When it fails:</strong> A key concept straddles a token boundary — neither chunk captures the full idea. The diagnoser flags this as <strong>F-01 Retrieval Miss</strong> (all chunk similarity scores &lt; 0.30).</p>
+
+  <h3>2B. Recursive Character Splitting</h3>
+
+  <p>Try to split on increasingly granular natural separators: <code>\n\n</code> → <code>\n</code> → <code>. </code> → <code> </code>. If a piece is still too large, move to the next separator.</p>
+
+  <pre><code>text = """Paragraph one about embeddings.
+
+Paragraph two about transformers. It has multiple sentences.
+Each sentence is a natural boundary."""
+
+chunks = recursive_split_chunk(text, chunk_size=50, overlap=10)
+print(chunks)
+# → ['Paragraph one about embeddings.',
+#    'Paragraph two about transformers.',
+#    ' It has multiple sentences.',
+#    'Each sentence is a natural boundary.']</code></pre>
+
+  <p><strong>State map:</strong></p>
+  <pre><code>BEFORE:  "Paragraph one...\n\nParagraph two...\nEach sentence..."  (one string)
+         ↓ split on \n\n → ["Paragraph one...", "Paragraph two...\nEach sentence..."]
+         ↓ split on \n  → ["Paragraph two...", "Each sentence..."]
+         ↓ merge pieces up to chunk_size=50 chars
+AFTER:   ["Paragraph one about embeddings.",
+          "Paragraph two about transformers.",
+          " It has multiple sentences.",
+          "Each sentence is a natural boundary."]</code></pre>
+
+  <p><strong>Pros:</strong> Respects document structure without embedding computation. Good default.<br>
+  <strong>Cons:</strong> Character-based (not token-based). Assumes consistent formatting.</p>
+
+  <p><strong>When it fails:</strong> A concept spans two paragraphs and gets split — each chunk has half the story. The diagnoser flags this as <strong>F-04 Answer Incomplete</strong>.</p>
+
+  <h3>2C. Semantic Chunking</h3>
+
+  <p>Embed every sentence individually. Track the running "topic centroid" (average vector). When a new sentence's cosine similarity to the centroid drops below threshold, that's a topic shift — cut there.</p>
+
+  <pre><code>text = "Transformers use attention. Attention weighs tokens.
+        Dogs are mammals. Cats are also mammals."
+
+sentences = ["Transformers use attention.", "Attention weighs tokens.",
+             "Dogs are mammals.", "Cats are also mammals."]
+vecs = embed_fn(sentences)  # [[0.1, 0.2, ...], [0.1, 0.2, ...], [0.8, 0.1, ...], ...]
+
+# Cosine similarity between adjacent sentences:
+# [0.92, 0.35, 0.88]
+#          ↑ split here (0.35 < threshold 0.5)
+
+chunks = semantic_chunk(text, embed_fn, threshold=0.5)
+print(chunks)
+# → ["Transformers use attention. Attention weighs tokens.",
+#    "Dogs are mammals. Cats are also mammals."]</code></pre>
+
+  <p><strong>State map:</strong></p>
+  <pre><code>BEFORE:  "Transformers use attention. Attention weighs tokens. Dogs are mammals. Cats are also mammals."
+         ↓ _split_sentences() → 4 sentences
+         ↓ embed_fn(sentences) → 4 vectors (each ~256 dims)
+         ↓ _find_boundaries(): compare adjacent sentence vectors
+         → similarity drops at sentence 2→3 (0.35 < 0.5 threshold)
+AFTER:   ["Transformers use attention. Attention weighs tokens.",
+          "Dogs are mammals. Cats are also mammals."]</code></pre>
+
+  <p><strong>Pros:</strong> Respects topic boundaries naturally. Cuts where meaning shifts, not where counters run out.<br>
+  <strong>Cons:</strong> Expensive — one embedding call per sentence. Uneven chunk sizes. Threshold is another hyperparameter.</p>
+
+  <p><strong>When it fails:</strong> Threshold too loose (0.3) — unrelated sentences get grouped together, the LLM confabulates connections. The diagnoser flags this as <strong>F-03 Hallucination</strong> (faithfulness &lt; 0.50).</p>
+
+  <hr>
+
+  <h2>3. Chunk Overlap</h2>
+
+  <p>Overlap prevents splitting a concept across two chunks where neither chunk alone suffices.</p>
+
+  <pre><code>Without overlap:
+  Chunk 1: "...the key principle is that"
+  Chunk 2: "reliability comes from redundancy..."
+
+With overlap (64 chars):
+  Chunk 1: "...the key principle is that reliability comes..."
+  Chunk 2: "...that reliability comes from redundancy..."</code></pre>
+
+  <p><strong>Rule of thumb:</strong> Overlap = 10–20% of chunk size. More overlap = more embedding compute, more near-duplicate chunks. Less overlap = potential semantic breakage.</p>
+
+  <hr>
+
+  <h2>4. How the Optimizer Uses These</h2>
+
+  <p>Each chunking strategy triggers a <em>different</em> diagnosis, which maps to a <em>different</em> improver recipe:</p>
+
+  <table>
+    <tr><th>Failure</th><th>Diagnosis</th><th>Improver's fix</th></tr>
+    <tr><td>fixed_size cuts mid-concept</td><td>F-01 Retrieval Miss</td><td>increase k, switch to hierarchical, add overlap</td></tr>
+    <tr><td>recursive_split splits across paragraphs</td><td>F-04 Answer Incomplete</td><td>increase chunk_size, increase overlap</td></tr>
+    <tr><td>semantic threshold too loose</td><td>F-03 Hallucination</td><td>stricter prompt, smaller chunks, more overlap</td></tr>
+  </table>
+
+  <p>This is why 3 strategies is the right number — each teaches a different failure mode and a different fix. Adding more strategies would just add noise.</p>
+
+  <hr>
+
+  <h2>Quiz</h2>
+
+  <ol>
+    <li>Which chunking strategy requires computing embeddings for every sentence?</li>
+    <li>What problem does chunk overlap solve?</li>
+    <li>If a query returns chunks with all similarity scores &lt; 0.30, which diagnosis fires?</li>
+    <li>Why is fixed_size token-based while recursive_split is character-based? What does that mean for consistency?</li>
+    <li>What is the precision-recall tradeoff between small and large chunks?</li>
+  </ol>
+
+  <details>
+    <summary>Reveal answers</summary>
+    <ol>
+      <li>Semantic chunking — it embeds each sentence, then groups by cosine similarity thresholds.</li>
+      <li>It prevents a concept from being split across chunk boundaries where neither chunk alone contains the full meaning.</li>
+      <li>F-01 Retrieval Miss — the retrieval system found nothing relevant.</li>
+      <li>Fixed_size uses tiktoken (same tokenizer as the LLM), so chunk boundaries align with the LLM's vocabulary. Recursive_split uses len(text) which counts characters — a 256-char chunk could be 40-60 words depending on the text, while 256 tokens is roughly 190 words. This means context_assembly.py (which uses tiktoken) and recursive_split use different units, causing slight mismatches.</li>
+      <li>Small chunks: high precision (exact match) but low recall (miss context). Large chunks: high recall (captures context) but low precision (includes noise).</li>
+    </ol>
+  </details>
+
+  <hr>
+
+  <h2>Production Grounding</h2>
+
+  <p>In production, you don't choose one strategy — you <strong>layer</strong> them:</p>
+  <ol>
+    <li><strong>Parse:</strong> Extract text per format (PDF→text, Markdown→headers+text)</li>
+    <li><strong>Split:</strong> Use recursive char splitting as primary, semantic splitting as fallback</li>
+    <li><strong>Enrich:</strong> Attach metadata (source, section, page, date)</li>
+    <li><strong>Embed:</strong> Generate one embedding per chunk</li>
+    <li><strong>Index:</strong> Store in vector DB with metadata for filtering</li>
+  </ol>
+
+  <p>The chunk is your <em>retrieval unit</em> — it determines what the retriever returns. But what you retrieve and what you show the LLM are often different things (parent-child expansion, context assembly).</p>
+
+  <hr>
+
+  <p><strong>Follow-up questions?</strong> Ask me anything about this lesson.</p>
+
+  <p><a href="00-pipeline-basics.html">← Lesson 0 (Pipeline Basics)</a> | <a href="02-embeddings.html">Next: Lesson 2 (Embeddings) →</a></p>
+</body>
+</html>

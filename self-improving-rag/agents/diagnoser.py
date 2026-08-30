@@ -11,15 +11,15 @@ The 5 Failure Types:
   F-01  Retrieval Miss       — didn't find relevant chunks
   F-02  Context Overflow     — found good chunks but couldn't fit them
   F-03  Hallucination        — model made up facts not in context
-  F-04  Answer Incomplete    — answer correct but missing key details
+    F-04  Answer Incomplete    — answer is partial or abstains despite context
   F-05  Latency Spike        — answer fine but too slow
 
-Origin: AutoRAG's app/graph/nodes/diagnoser.py:166 _rule_based_classify()
-        Failure types from .claude/specs/agents/07-diagnoser.md
+Architecture: Rule-based failure classification with 5 failure types.
 """
 
 import sys
 import os
+import re
 
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _project_root not in sys.path:
@@ -27,6 +27,24 @@ if _project_root not in sys.path:
 
 from state import RunState
 from config import FAITHFULNESS_FLOOR, RETRIEVAL_SIM_FLOOR, LATENCY_CAP_MS
+
+
+_ABSTENTION_PATTERNS = (
+    r"\bi (?:do not|don't) have enough information\b",
+    r"\bnot enough (?:information|context)\b",
+    r"\bcannot determine\b",
+    r"\bcan(?:not|'t) answer\b",
+    r"\bprovided context does not (?:mention|contain)\b",
+    r"\bunable to answer\b",
+)
+
+
+def _is_abstention(answer: str) -> bool:
+    """Return True when an answer explicitly declines to answer."""
+    return any(
+        re.search(pattern, answer, flags=re.IGNORECASE)
+        for pattern in _ABSTENTION_PATTERNS
+    )
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -63,9 +81,9 @@ _FAILURE_CATALOG = {
     "F-04": {
         "name": "Answer Incomplete",
         "remediation_hint": (
-            "Answer is on-topic but missing key details. "
-            "Try: increase chunk_size for more context per chunk, increase retrieval_k "
-            "to retrieve more content, or increase chunk_overlap."
+            "Answer is incomplete or abstained despite retrieved context. "
+            "Try: increase retrieval_k to retrieve more content, increase chunk_size "
+            "or chunk_overlap for more coherent context, then refine the prompt if needed."
         ),
     },
     "F-05": {
@@ -83,11 +101,12 @@ _FAILURE_CATALOG = {
 # Rule Cascade — checked in fixed priority order (first match wins)
 #
 # Priority order rationale:
-#   1. F-03 Hallucination   — most dangerous, safety-critical
-#   2. F-01 Retrieval Miss  — if retrieval failed, everything downstream is compromised
-#   3. F-02 Context Overflow — found good content but couldn't use it all
-#   4. F-05 Latency Spike   — answer was fine but too slow
-#   5. F-04 Answer Incomplete — catch-all for low scores with no specific failure
+#   1. F-01 Retrieval Miss  — an abstention with no chunks means no evidence arrived
+#   2. F-04 Answer Incomplete — abstention with retrieved context is not hallucination
+#   3. F-03 Hallucination   — unsupported factual claims remain safety-critical
+#   4. F-02 Context Overflow — found good content but couldn't use it all
+#   5. F-05 Latency Spike   — answer was fine but too slow
+#   6. F-04 Answer Incomplete — catch-all for low scores with no specific failure
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _classify_failure(state: RunState) -> tuple[str, float, str]:
@@ -102,8 +121,29 @@ def _classify_failure(state: RunState) -> tuple[str, float, str]:
     max_context = state.get("config", {}).get("max_context_tokens", 4000)
     latency_ms = state.get("latency_ms", 0)
     unified_score = state.get("unified_score", 0.0)
+    answer = state.get("answer", "")
+    chunks = state.get("retrieved_chunks", [])
 
-    # ── Priority 1: Hallucination (F-03) ─────────────────────────────────
+    # ── Priority 1: Explicit abstention ───────────────────────────────────
+    # A refusal makes no unsupported domain claim, so it must not be labeled
+    # hallucination solely because the faithfulness judge returns a low score.
+    if _is_abstention(answer):
+        if not chunks:
+            return (
+                "F-01",
+                0.95,
+                "Answer explicitly abstained and no chunks were retrieved. "
+                "The model received no evidence to answer from.",
+            )
+        return (
+            "F-04",
+            0.78,
+            f"Answer explicitly abstained despite {len(chunks)} retrieved chunks. "
+            "This is an incomplete answer, not a hallucination; test broader "
+            "retrieval or more coherent context.",
+        )
+
+    # ── Priority 2: Hallucination (F-03) ─────────────────────────────────
     # Most dangerous — answer contains unsupported claims.
     # Checked first because a hallucinated answer is actively harmful
     # regardless of other metrics.
@@ -115,10 +155,9 @@ def _classify_failure(state: RunState) -> tuple[str, float, str]:
             f"Answer contains claims not grounded in retrieved context.",
         )
 
-    # ── Priority 2: Retrieval Miss (F-01) ────────────────────────────────
+    # ── Priority 3: Retrieval Miss (F-01) ────────────────────────────────
     # Didn't find relevant content. If retrieval fails, everything downstream
     # is compromised — no point analyzing answer quality.
-    chunks = state.get("retrieved_chunks", [])
     if not chunks or retrieval_score < RETRIEVAL_SIM_FLOOR:
         return (
             "F-01",
@@ -127,7 +166,7 @@ def _classify_failure(state: RunState) -> tuple[str, float, str]:
             f"Retrieved {len(chunks)} chunks but content lacks relevant information.",
         )
 
-    # ── Priority 3: Context Overflow (F-02) ──────────────────────────────
+    # ── Priority 4: Context Overflow (F-02) ──────────────────────────────
     # Found good content but couldn't fit it all into the context window.
     # Token budget is saturated.
     if context_tokens >= max_context * 0.95:  # 95% = effectively full
@@ -138,7 +177,7 @@ def _classify_failure(state: RunState) -> tuple[str, float, str]:
             f"Relevant content may have been truncated.",
         )
 
-    # ── Priority 4: Latency Spike (F-05) ─────────────────────────────────
+    # ── Priority 5: Latency Spike (F-05) ─────────────────────────────────
     # Answer was fine but pipeline is too slow. Lower priority because a
     # slow correct answer is better than a fast wrong one.
     if latency_ms > LATENCY_CAP_MS:
@@ -149,7 +188,7 @@ def _classify_failure(state: RunState) -> tuple[str, float, str]:
             f"Pipeline response time exceeds acceptable threshold.",
         )
 
-    # ── Priority 5: Answer Incomplete (F-04) — catch-all ─────────────────
+    # ── Priority 6: Answer Incomplete (F-04) — catch-all ─────────────────
     # Nothing critical went wrong, but the score is still low. Usually
     # means the answer needs more context or a better prompt.
     return (
@@ -168,8 +207,8 @@ def diagnoser_node(state: RunState) -> dict:
     """LangGraph node: classify pipeline failure into one of 5 types.
 
     Reads from state:
-      - faithfulness, retrieval_score, context_tokens, latency_ms, unified_score
-      - retrieved_chunks, config (for context budget)
+    - answer, faithfulness, retrieval_score, context_tokens, latency_ms, unified_score
+    - retrieved_chunks, config (for context budget)
 
     Writes to state:
       - failure_type      (F-01 through F-05)

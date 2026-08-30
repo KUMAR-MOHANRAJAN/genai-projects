@@ -14,6 +14,7 @@ from embeddings import EmbeddingClient
 from vector_store import ChromaStore
 from chunking import fixed_size_chunk, recursive_split_chunk, semantic_chunk
 from config import BOOK_PATHS, DEFAULT_CONFIG
+from utils import build_collection_name
 
 
 def load_book(path: str, max_pages: int = 50, start_page: int = 1) -> str:
@@ -90,7 +91,9 @@ def ingest(
     Returns the collection name.
     """
     book_path = book_path or BOOK_PATHS[0]
-    collection_name = f"rag_{version}_{strategy}_{chunk_size}"
+    collection_name = build_collection_name(
+        {"chunk_strategy": strategy, "chunk_size": chunk_size}, version
+    )
 
     # Check if collection already exists
     store = ChromaStore(collection_name)

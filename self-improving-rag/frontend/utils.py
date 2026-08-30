@@ -7,10 +7,19 @@ No API server needed — Streamlit runs in the same Python process.
 import os
 import sys
 
-# Add project root to path so we can import pipeline modules
+# Add project root to path so we can import pipeline modules.
+# IMPORTANT: insert at index 0 so project-root modules are found before
+# this directory's own modules (avoids circular import between
+# frontend/utils.py and project-root utils.py).
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+# Import project-root utils FIRST (before pipeline, which also imports it)
+# to avoid the partially-initialized module error.
+import importlib
+_root_utils = importlib.import_module("utils")
+build_collection_name = _root_utils.build_collection_name
 
 from pipeline import run_pipeline  # noqa: E402
 from ingest import ingest  # noqa: E402
@@ -18,6 +27,7 @@ from config import DEFAULT_CONFIG, INGEST_PAGES, INGEST_START_PAGE  # noqa: E402
 from ground_truth import TEST_QUERIES  # noqa: E402
 from agents.optimizer import run_optimization  # noqa: E402
 from run_history import save_query_run, save_optimization_run, load_history, clear_history  # noqa: E402
+from vector_store import ChromaStore  # noqa: E402
 
 CORPUS_DIR = os.path.join(PROJECT_ROOT, "corpus")
 
@@ -49,14 +59,16 @@ def run_query(query: str, config: dict, version: str = "v1",
     """Run the full pipeline: auto-ingest if needed, then query.
 
     Returns the RunState dict with answer, scores, cost, latency, etc.
+
+    Uses build_collection_name() from agents/builder.py — single source
+    of truth for collection naming.
     """
     strategy = config.get("chunk_strategy", "fixed_size")
     chunk_size = config.get("chunk_size", 256)
     chunk_overlap = config.get("chunk_overlap", 0)
 
-    # Auto-ingest if collection is empty
-    from vector_store import ChromaStore
-    collection_name = f"rag_{version}_{strategy}_{chunk_size}"
+    # Use build_collection_name for consistency (single source of truth)
+    collection_name = config.get("collection_name") or build_collection_name(config, version)
     store = ChromaStore(collection_name)
     if store.count() == 0:
         ingest(
@@ -94,10 +106,15 @@ def run_optimization_ui(
     version: str = "g1",
     target_score: float = 0.85,
     max_iterations: int = 5,
+    baseline_result: dict | None = None,
+    force_continue: bool = False,
 ) -> dict:
     """Wrapper for the optimizer — called from Streamlit UI.
 
     Returns the full optimization report dict with iteration history.
+    If baseline_result is provided, the optimizer skips its first graph
+    invocation and uses the provided result as iteration 0.
+    If force_continue is True, faithfulness veto and HITL stops are skipped.
     """
     return run_optimization(
         query=query,
@@ -105,4 +122,44 @@ def run_optimization_ui(
         version=version,
         target_score=target_score,
         max_iterations=max_iterations,
+        baseline_result=baseline_result,
+        force_continue=force_continue,
     )
+
+
+def get_collections() -> list[dict]:
+    """List all ChromaDB collections with chunk counts.
+
+    Returns list of {"name": str, "count": int} sorted by name.
+    Only returns non-empty collections.
+    """
+    return [c for c in ChromaStore.list_collections() if c["count"] > 0]
+
+
+def parse_collection_name(name: str) -> dict:
+    """Parse collection name into config components.
+
+    'rag_g1_fixed_size_256' → {version: 'g1', strategy: 'fixed_size', chunk_size: 256}
+    """
+    parts = name.split("_")
+    # Format: rag_{version}_{strategy_word1}_{strategy_word2}_{chunk_size}
+    # e.g., rag_g1_fixed_size_256
+    if len(parts) >= 5 and parts[0] == "rag":
+        version = parts[1]
+        # Strategy is everything between version and the last part (chunk_size)
+        chunk_size = int(parts[-1])
+        strategy = "_".join(parts[2:-1])
+        return {
+            "version": version,
+            "chunk_strategy": strategy,
+            "chunk_size": chunk_size,
+        }
+    return {"version": "g1", "chunk_strategy": "fixed_size", "chunk_size": 256}
+
+
+def collection_label(col: dict) -> str:
+    """Build a display label for a collection dropdown.
+
+    'rag_g1_fixed_size_256' (19 chunks) → 'rag_g1_fixed_size_256 (19 chunks)'
+    """
+    return f"{col['name']} ({col['count']} chunks)"

@@ -4,5 +4,6 @@ chromadb
 langgraph
 python-dotenv
 numpy
+pydantic
 streamlit
 PyMuPDF

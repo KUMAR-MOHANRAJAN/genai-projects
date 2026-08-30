@@ -20,7 +20,7 @@ Cost accounting:
   Uses generation_cost_usd only — judge calls are evaluation overhead,
   not pipeline cost the user pays for.
 
-Origin: AutoRAG's app/services/evaluation_service.py + app/graph/nodes/evaluator.py
+Architecture: LangGraph evaluation node with LLM judges and unified scoring.
 """
 
 import sys
@@ -34,6 +34,7 @@ if _project_root not in sys.path:
 from state import RunState
 from config import UNIFIED_TARGET, HITL_LOW, FAITHFULNESS_FLOOR
 from ground_truth import TEST_QUERIES
+from utils import compute_gate_decision
 from pipeline import (
     _judge_faithfulness,
     _judge_relevance,
@@ -116,19 +117,8 @@ def evaluator_node(state: RunState) -> dict:
         cost_usd=cost_usd,
     )
 
-    # ── 4. Gate Decision (safety before quality) ─────────────────────────
-    if faithfulness is not None and faithfulness < FAITHFULNESS_FLOOR:
-        gate_decision = "hard_block"
-        gate_reason = f"Faithfulness veto: {faithfulness:.2f} < {FAITHFULNESS_FLOOR}"
-    elif unified_score >= UNIFIED_TARGET:
-        gate_decision = "deploy_eligible"
-        gate_reason = f"Score {unified_score:.4f} >= {UNIFIED_TARGET} target"
-    elif unified_score >= HITL_LOW:
-        gate_decision = "hitl_required"
-        gate_reason = f"Score {unified_score:.4f} in gray band [{HITL_LOW}, {UNIFIED_TARGET})"
-    else:
-        gate_decision = "hard_block"
-        gate_reason = f"Score {unified_score:.4f} < {HITL_LOW} minimum"
+    # ── 4. Gate Decision (single source of truth) ─────────────────────────
+    gate_decision, gate_reason = compute_gate_decision(unified_score, faithfulness)
 
     # ── 5. Return state updates ──────────────────────────────────────────
     return {

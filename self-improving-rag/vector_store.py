@@ -34,3 +34,17 @@ class ChromaStore:
     def delete(self):
         """Delete the entire collection (used for cleanup between runs)."""
         self.client.delete_collection(name=self.collection.name)
+
+    @staticmethod
+    def list_collections() -> list[dict]:
+        """List all ChromaDB collections with their chunk counts.
+
+        Returns list of {"name": str, "count": int} dicts, sorted by name.
+        """
+        client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
+        collections = []
+        for col in client.list_collections():
+            name = col.name if hasattr(col, "name") else str(col)
+            count = client.get_collection(name).count()
+            collections.append({"name": name, "count": count})
+        return sorted(collections, key=lambda c: c["name"])

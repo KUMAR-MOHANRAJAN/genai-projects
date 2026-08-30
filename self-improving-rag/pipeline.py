@@ -22,10 +22,10 @@ Architecture note — what lives where:
   │ non-graph entry point.                                                 │
   └─────────────────────────────────────────────────────────────────────────┘
 
-Evaluation design (mirrors AutoRAG):
+Evaluation design:
   - We NEVER skip evaluation based on retrieval quality. The diagnoser needs
     the full picture to classify failures (F-01 vs F-03).
-  - Unified score: AutoRAG formula v1.2
+  - Unified score formula v1.2:
     0.25×Recall + 0.35×Quality + 0.25×Faithfulness − latency_pen − cost_pen
   - Cost = generation LLM call only (judge calls are eval overhead, not pipeline cost).
   - Latency = full pipeline wall-clock (retrieval + generation + judge calls).
@@ -37,11 +37,14 @@ from config import (
     DEFAULT_CONFIG, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, JUDGE_MODEL,
     PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M,
     UNIFIED_TARGET, HITL_LOW, FAITHFULNESS_FLOOR,
+    validate_config,
 )
 from state import RunState, initial_state
 from retrieval import search
 from generation import assemble_context, generate
 from ground_truth import TEST_QUERIES
+from agents.llm_utils import judge_call as _judge_call_via_utils
+from utils import build_collection_name, compute_gate_decision
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # LLM-Judge Evaluation (→ migrates to agents/evaluator.py)
@@ -104,27 +107,13 @@ ANSWER:
 
 
 def _llm_judge(prompt: str) -> dict:
-    """Call the judge LLM and parse JSON response. Returns empty dict on failure."""
-    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-    try:
-        resp = client.chat.completions.create(
-            model=JUDGE_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=1024,
-        )
-        raw = resp.choices[0].message.content or "{}"
-        # Strip markdown code fences (```json ... ``` or ``` ... ```)
-        if "```" in raw:
-            parts = raw.split("```")
-            # The JSON is in parts[1] (between first and second ```)
-            if len(parts) >= 3:
-                raw = parts[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-        return json.loads(raw.strip())
-    except Exception:
-        return {}
+    """Call the judge LLM and parse JSON response. Returns empty dict on failure.
+
+    Uses agents/llm_utils.judge_call() for provider failover and proper
+    error handling. This replaces the bare OpenAI call that had no retry
+    or error classification.
+    """
+    return _judge_call_via_utils(prompt, agent_name="judge")
 
 
 def _judge_faithfulness(answer: str, context: str) -> tuple[float | None, str | None]:
@@ -230,7 +219,7 @@ def _compute_retrieval_score(
 ) -> float:
     """Retrieval sub-score: 0.5 × precision@k + 0.5 × recall@k.
 
-    Mirrors AutoRAG's compute_retrieval_score — feeds the Unified Score "R" term.
+    Feeds the Unified Score "R" term.
     NOTE: These are classical IR metrics (keyword-based, no LLM), NOT the RAGAS
     context_precision / context_recall metrics (which are LLM-judged, Layer 2 only).
 
@@ -245,8 +234,11 @@ def _compute_retrieval_score(
         recall = recall_at_k(chunks, keywords, k=k)
         return 0.5 * precision + 0.5 * recall
 
-    # Fallback: avg similarity (no ground truth keywords available)
-    return sum(c.get("score", 0) for c in chunks) / len(chunks)
+    # No ground truth keywords — cannot compute meaningful retrieval score.
+    # Production systems use LLM-judged RAGAS context_precision/recall here.
+    # We skip that to save LLM cost and return None instead of a misleading
+    # embedding-similarity average.
+    return None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -261,7 +253,7 @@ def _compute_quality_score(
     answer_relevancy: float | None,
     answer_correctness: float | None,
 ) -> float | None:
-    """Quality sub-score: mirrors AutoRAG's compute_quality_score.
+    """Quality sub-score.
 
     Quality = 0.6 × AnswerCorrectness + 0.4 × AnswerRelevancy
     Falls back to AnswerRelevancy alone if no ground truth.
@@ -275,7 +267,7 @@ def _compute_quality_score(
 
 
 def _compute_unified_score(
-    recall: float,
+    recall: float | None,
     quality: float | None,
     faithfulness: float | None,
     latency_ms: int,
@@ -284,13 +276,13 @@ def _compute_unified_score(
     """AutoRAG's unified score formula v1.2, with graceful None handling.
 
     Full formula (all metrics available):
-      Score = 0.25×Recall + 0.35×Quality + 0.25×Faithfulness
-              − 0.10×min(latency/3000, 1)
-              − 0.05×min(cost/MAX_QUERY_COST, 1)
+      Score = 0.25*Recall + 0.35*Quality + 0.25*Faithfulness
+              - 0.10*min(latency/3000, 1)
+              - 0.05*min(cost/MAX_QUERY_COST, 1)
 
-    When a judge metric is None (judge failure), that term is dropped and
-    remaining positive weights are re-normalized to sum to 0.85.
-    This avoids fabricating scores — the unified score simply becomes
+    When a metric is None (no ground truth or judge failure), that term is
+    dropped and remaining positive weights are re-normalized to sum to 0.85.
+    This avoids fabricating scores -- the unified score simply becomes
     less confident (based on fewer signals) rather than wrong.
 
     MAX_QUERY_COST = $0.01 (generous cap for this project)
@@ -300,7 +292,9 @@ def _compute_unified_score(
     cost_penalty = 0.05 * min(cost_usd / MAX_QUERY_COST, 1.0)
 
     # Build weighted terms from available metrics
-    terms = [(0.25, recall)]  # recall is always available (keyword/similarity based)
+    terms = []
+    if recall is not None:
+        terms.append((0.25, recall))
     if quality is not None:
         terms.append((0.35, quality))
     if faithfulness is not None:
@@ -344,20 +338,18 @@ def run_pipeline(
     Returns:
         RunState with answer, LLM-judge scores, retrieval metrics, costs, and metadata.
     """
-    cfg = config or DEFAULT_CONFIG
+    cfg = validate_config(config or DEFAULT_CONFIG)
     state = initial_state(query=query, config=cfg, version=version)
 
-    # Build collection name from version + strategy + chunk_size
-    strategy = cfg.get("chunk_strategy", "fixed_size")
-    chunk_size = cfg.get("chunk_size", 256)
-    collection_name = f"rag_{version}_{strategy}_{chunk_size}"
+    # Use explicit collection_name from config if provided, else build from params
+    collection_name = cfg.get("collection_name") or build_collection_name(cfg, version)
     state["collection_name"] = collection_name
 
     print(f"\n{'=' * 70}")
     print(f"PIPELINE — run_pipeline()")
     print(f"  Query:      {query[:80]}")
     print(f"  Collection: {collection_name}")
-    print(f"  Config:     k={cfg.get('retrieval_k')}, chunk={chunk_size}, "
+    print(f"  Config:     k={cfg.get('retrieval_k')}, chunk={cfg.get('chunk_size')}, "
           f"overlap={cfg.get('chunk_overlap', 0)}, "
           f"max_ctx={cfg.get('max_context_tokens', 4000)}")
     print(f"{'=' * 70}")
@@ -379,8 +371,11 @@ def run_pipeline(
     precision = precision_at_k(chunks, keywords, k=k) if keywords else 0.0
     recall_kw = recall_at_k(chunks, keywords, k=k) if keywords else 0.0
     retrieval_score = _compute_retrieval_score(chunks, keywords, k=k)
-    print(f"         precision={precision:.2f}, recall={recall_kw:.2f}, "
-          f"retrieval_score={retrieval_score:.2f}")
+    if retrieval_score is not None:
+        print(f"         precision={precision:.2f}, recall={recall_kw:.2f}, "
+              f"retrieval_score={retrieval_score:.2f}")
+    else:
+        print(f"         No ground truth keywords — retrieval score: N/A")
 
     state["retrieval_score"] = retrieval_score
     state["retrieval_precision"] = precision
@@ -463,20 +458,9 @@ def run_pipeline(
     state["cost_usd"] = cost_usd
     state["latency_ms"] = latency_ms
 
-    # ── Step 8: Gate Decision (AutoRAG's deployment gate) ─────────────────
-    # Order matters: faithfulness veto fires FIRST (safety before success).
-    if faithfulness is not None and faithfulness < FAITHFULNESS_FLOOR:
-        gate_decision = "hard_block"
-        gate_reason = f"Faithfulness veto: {faithfulness:.2f} < {FAITHFULNESS_FLOOR}"
-    elif unified_score >= UNIFIED_TARGET:
-        gate_decision = "deploy_eligible"
-        gate_reason = f"Score {unified_score:.4f} >= {UNIFIED_TARGET} target"
-    elif unified_score >= HITL_LOW:
-        gate_decision = "hitl_required"
-        gate_reason = f"Score {unified_score:.4f} in gray band [{HITL_LOW}, {UNIFIED_TARGET})"
-    else:
-        gate_decision = "hard_block"
-        gate_reason = f"Score {unified_score:.4f} < {HITL_LOW} minimum"
+    # ── Step 8: Gate Decision (single source of truth) ─────────────────────
+    # Uses compute_gate_decision() — one place for all threshold logic.
+    gate_decision, gate_reason = compute_gate_decision(unified_score, faithfulness)
 
     state["gate_decision"] = gate_decision
     state["gate_reason"] = gate_reason

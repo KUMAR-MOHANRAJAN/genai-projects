@@ -1,9 +1,13 @@
 """Configuration — single source of truth for all knobs and thresholds.
 
-Mirrors AutoRAG's slo.yaml + config.py combined into one file for simplicity.
+Pipeline config validation uses Pydantic models to catch bad values
+at startup rather than letting them silently break the pipeline.
 """
 import os
+from typing import Literal
+
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field, model_validator
 
 load_dotenv()
 os.environ.setdefault("SSL_CERT_FILE", "/etc/ssl/certs/ca-certificates.crt")
@@ -73,3 +77,105 @@ DRIFT_MIN_DROP = 0.05       # cumulative drop to flag drift
 # ─── Cost accounting (gpt-4o-mini approx, per 1M tokens) ─────────────────────
 PRICE_INPUT_PER_M = 0.15
 PRICE_OUTPUT_PER_M = 0.60
+
+# ─── Known chunking strategies ───────────────────────────────────────────────
+KNOWN_STRATEGIES = {"fixed_size", "recursive_split", "semantic"}
+KNOWN_PROMPT_TEMPLATES = {"v1", "v2"}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Pipeline Config Validation — Pydantic model
+#
+# Validates pipeline config at startup and before each pipeline run.
+# Bad values (negative k, chunk_size=0) raise ConfigValidationError with
+# clear messages instead of silently breaking deep in the pipeline.
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class PipelineConfig(BaseModel):
+    """Validated pipeline configuration.
+
+    Every field has bounds that prevent silent failures:
+      - chunk_size >= 32 (smaller chunks lose semantic coherence)
+      - chunk_overlap >= 0 and < chunk_size (overlap can't exceed chunk)
+      - retrieval_k >= 1 (must retrieve at least one chunk)
+      - max_context_tokens >= 500 (too small = unusable context)
+      - chunk_strategy must be a known strategy
+      - prompt_template must be a known template version
+
+    Usage:
+        validated = PipelineConfig(**raw_config_dict)
+        config_dict = validated.to_dict()
+    """
+
+    chunk_strategy: str = Field(
+        default="fixed_size",
+        description="Chunking strategy: fixed_size, recursive_split, or semantic",
+    )
+    chunk_size: int = Field(
+        default=256,
+        ge=32,
+        description="Chunk size in characters/tokens. Must be >= 32.",
+    )
+    chunk_overlap: int = Field(
+        default=0,
+        ge=0,
+        description="Overlap between consecutive chunks. Must be >= 0 and < chunk_size.",
+    )
+    retrieval_k: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Number of chunks to retrieve. Must be 1-50.",
+    )
+    max_context_tokens: int = Field(
+        default=4000,
+        ge=500,
+        description="Maximum tokens in assembled context. Must be >= 500.",
+    )
+    prompt_template: str = Field(
+        default="v1",
+        description="Prompt template version: v1 or v2.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> "PipelineConfig":
+        """Cross-field validation: overlap must be less than chunk_size."""
+        if self.chunk_overlap >= self.chunk_size:
+            raise ValueError(
+                f"chunk_overlap ({self.chunk_overlap}) must be less than "
+                f"chunk_size ({self.chunk_size})"
+            )
+        if self.chunk_strategy not in KNOWN_STRATEGIES:
+            raise ValueError(
+                f"Unknown chunk_strategy '{self.chunk_strategy}'. "
+                f"Must be one of: {', '.join(sorted(KNOWN_STRATEGIES))}"
+            )
+        if self.prompt_template not in KNOWN_PROMPT_TEMPLATES:
+            raise ValueError(
+                f"Unknown prompt_template '{self.prompt_template}'. "
+                f"Must be one of: {', '.join(sorted(KNOWN_PROMPT_TEMPLATES))}"
+            )
+        return self
+
+    def to_dict(self) -> dict:
+        """Convert to plain dict for passing to pipeline functions."""
+        return self.model_dump()
+
+
+def validate_config(config: dict) -> dict:
+    """Validate a pipeline config dict and return the validated version.
+
+    This is the convenience function that wraps PipelineConfig.
+    Call this before any pipeline run to catch bad values early.
+
+    Args:
+        config: Raw config dict (may have bad values).
+
+    Returns:
+        Validated config dict with all fields present.
+
+    Raises:
+        ValueError: If any field fails validation (with a clear message).
+    """
+    validated = PipelineConfig(**config)
+    return validated.to_dict()

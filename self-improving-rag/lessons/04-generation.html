@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson 4: Generation & Context Assembly</title>
+  <link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+  <h1>Lesson 4: Generation & Context Assembly</h1>
+
+  <h2>Orientation</h2>
+  <p><strong>Why are we learning this?</strong> Retrieval finds the right pages, but the LLM can only read a limited amount. Context assembly decides <em>which</em> chunks fit in the budget. Generation turns those chunks into an answer. The self-improving loop diagnoses F-02 (Context Overflow) when assembly truncates too much, and F-03 (Hallucination) when generation invents facts.</p>
+  <p><strong>How does it work?</strong> Two steps: (1) pack chunks greedily by score until token budget is full, (2) call the LLM with a grounded prompt.</p>
+  <p><strong>Input → Output:</strong> <code>([{text, score}, ...], max_tokens=4000)</code> → <code>"chunk1\n\nchunk2\n\nchunk3"</code> → <code>"Embeddings represent meaning by..."</code></p>
+  <p><strong>What breaks without it?</strong> No assembly = LLM gets raw chunk list (wrong format). No generation = no answer. Wrong prompt = hallucination.</p>
+
+  <p class="prereq">← <a href="03-retrieval.html">Lesson 3 (Retrieval)</a> | <a href="05-pipeline.html">Lesson 5 (Full Pipeline) →</a></p>
+
+  <hr>
+
+  <h2>1. Context Assembly</h2>
+
+  <h3>Context Card</h3>
+  <table>
+    <tr><td>What it is</td><td>Greedy-fill chunks by score into a single string within the LLM's token budget</td></tr>
+    <tr><td>Problem solved</td><td>"How much of the retrieved context can the LLM actually read?"</td></tr>
+    <tr><td>Input → Output</td><td><code>[{text, score}, ...]</code> → <code>"chunk1\n\nchunk2"</code> (≤4000 tokens)</td></tr>
+    <tr><td>Owns</td><td>Token counting (tiktoken), sorting by score, truncation</td></tr>
+    <tr><td>Does NOT own</td><td>Retrieval, generation, evaluation</td></tr>
+  </table>
+
+  <h3>How It Works</h3>
+
+  <pre><code>from generation import assemble_context
+
+chunks = [
+    {"text": "Embeddings map text to vectors...", "score": 0.87},
+    {"text": "Vector similarity measures meaning...", "score": 0.72},
+    {"text": "The stock market crashed today.", "score": 0.15},
+]
+
+context, token_count = assemble_context(chunks, max_tokens=4000)
+
+print(token_count)
+# → 530  (both high-scoring chunks fit)
+
+print(context[:80])
+# → "Embeddings map text to vectors...\n\nVector similarity measures meaning..."</code></pre>
+
+  <h3>State Map</h3>
+  <pre><code>BEFORE:  [
+           {"text": "Chunk A (200 tok)", "score": 0.87},
+           {"text": "Chunk B (150 tok)", "score": 0.72},
+           {"text": "Chunk C (180 tok)", "score": 0.65},
+           {"text": "Chunk D (3800 tok)", "score": 0.50},
+         ]
+         max_tokens = 4000
+         ↓ sort by score desc → [A, B, C, D]
+         ↓ add A: 200 tok (total: 200)
+         ↓ add B: 150 tok (total: 350)
+         ↓ add C: 180 tok (total: 530)
+         ↓ add D: 3800 tok → 530 + 3800 = 4330 > 4000 → STOP
+AFTER:   "Chunk A\n\nChunk B\n\nChunk C"  (530 tokens)
+         Returns: (context_string, 530)</code></pre>
+
+  <h3>Why Greedy Fill?</h3>
+  <p>AutoRAG's compressor uses the same pattern: sort by score, add until budget is full. This maximizes the quality of included chunks — the highest-scoring (most relevant) chunks get priority. It's simple, fast, and effective.</p>
+
+  <hr>
+
+  <h2>2. Generation</h2>
+
+  <h3>Context Card</h3>
+  <table>
+    <tr><td>What it is</td><td>Call the LLM with a grounded prompt containing context + question</td></tr>
+    <tr><td>Problem solved</td><td>"Given these pages, what's the answer?"</td></tr>
+    <tr><td>Input → Output</td><td><code>(context, question)</code> → <code>{answer, cost, tokens, latency}</code></td></tr>
+    <tr><td>Owns</td><td>LLM API call, prompt rendering, response parsing, cost/latency tracking</td></tr>
+    <tr><td>Does NOT own</td><td>Retrieval, context assembly, evaluation</td></tr>
+  </table>
+
+  <h3>How It Works</h3>
+
+  <pre><code>from generation import generate
+
+result = generate(
+    context="Embeddings map text to dense vectors...",
+    question="How do embeddings represent meaning?",
+    prompt_version="v1",
+)
+
+print(result["answer"][:100])
+# → "Embeddings represent meaning by mapping words or sentences into dense numerical vectors..."
+
+print(result["cost_usd"])
+# → 0.000312
+
+print(result["latency_ms"])
+# → 420</code></pre>
+
+  <h3>The Prompt is the Control Surface</h3>
+
+  <p>The prompt template is the <strong>single most important control surface</strong> in the pipeline. Two versions:</p>
+
+  <pre><code>v1 (standard):
+  "Answer based ONLY on the Context below.
+   If the Context does not contain enough information, say:
+   'I don't have enough information...'"
+
+v2 (stricter — used by improver's F-03 playbook):
+  "Every claim in your answer MUST be directly supported by a sentence in the Context.
+   Do not add information not present in the Context."</code></pre>
+
+  <p>Switching from v1 to v2 is one of the improver's recipes for fixing hallucination (F-03). The prompt is a config knob, not hardcoded text.</p>
+
+  <h3>State Map</h3>
+  <pre><code>BEFORE:  context = "Embeddings map text to dense vectors..."
+         question = "How do embeddings represent meaning?"
+         prompt_version = "v1"
+         ↓ render prompt:
+           System: "You are a precise document Q&A assistant..."
+           User: "Context: Embeddings map text...\n\nQuestion: How do embeddings...\n\nAnswer:"
+         ↓ OpenAI API call (gpt-4o-mini, temperature=0.0)
+         ↓ response: {content, usage: {prompt_tokens, completion_tokens}}
+AFTER:   {
+           "answer": "Embeddings represent meaning by mapping...",
+           "cost_usd": 0.000312,
+           "input_tokens": 180,
+           "output_tokens": 45,
+           "latency_ms": 420,
+           "model": "gpt-4o-mini",
+           "prompt_version": "v1"
+         }</code></pre>
+
+  <h3>Token Counting — Local, Not an API Call</h3>
+
+  <p>The <code>assemble_context</code> function counts tokens using <code>tiktoken</code> — OpenAI's official tokenizer library. This is <strong>purely local</strong>: no API call, no cost, no network:</p>
+
+  <pre><code>import tiktoken
+enc = tiktoken.get_encoding("o200k_base")  # loads a local lookup table (~1MB)
+tokens = enc.encode("hello world")          # local computation, zero cost
+print(tokens)
+# → [15330, 1917]  (integer IDs, not a model call)
+
+# How many tokens in a chunk?
+text = "Embeddings map text to dense vectors."
+print(len(enc.encode(text)))
+# → 8  (8 tokens, not 8 characters)</code></pre>
+
+  <p><code>tiktoken</code> is a <strong>lookup table</strong>, not a model. It splits text into subword units and maps them to integer IDs using a pre-shipped vocabulary file. The only thing that costs money is the actual LLM API call in <code>generator.py</code>.</p>
+
+  <h3>Cost Accounting</h3>
+  <pre><code>cost = (input_tokens / 1M) × $0.15 + (output_tokens / 1M) × $0.60
+     = (180 / 1M) × 0.15 + (45 / 1M) × 0.60
+     = $0.000027 + $0.000027 = $0.000054</code></pre>
+  <p>Prices are constants in <code>config.py</code>. The unified score's cost penalty uses this value.</p>
+
+  <h3>Failure Modes and Debugging</h3>
+  <table>
+    <tr><th>Failure</th><th>Signal</th><th>Debug</th></tr>
+    <tr><td>LLM hallucinates</td><td>faithfulness &lt; 0.50 (judge flags unsupported claims)</td><td>Switch to v2 prompt. Check context quality. Reduce noise.</td></tr>
+    <tr><td>LLM refuses</td><td>answer = "I don't have enough information..."</td><td>Context doesn't contain the answer. Check retrieval quality.</td></tr>
+    <tr><td>Context too long</td><td>context_tokens &gt; max_tokens (shouldn't happen — assembly truncates)</td><td>Reduce k or chunk_size. Assembly should prevent this.</td></tr>
+    <tr><td>API error</td><td>OpenAI raises exception</td><td>Check API key, rate limits, network. Add retry wrapper.</td></tr>
+  </table>
+
+  <hr>
+
+  <h2>3. Retrieval Metrics (Keyword-Based, NO LLM Call)</h2>
+
+  <p>Before evaluating the answer, we measure <strong>how well retrieval performed</strong>. If retrieval returns junk, the LLM gets wrong context — but we still evaluate the answer (AutoRAG's pattern: never skip evaluation, the diagnoser needs all metrics).</p>
+
+  <h3>Precision@k</h3>
+  <p>"Of the top-k chunks retrieved, how many were actually relevant?"</p>
+  <pre><code># Ground truth keywords: ["embedding", "vector", "semantic", "similarity"]
+# Retrieved 5 chunks:
+  Chunk 0: "Embeddings map text to vectors..."     ← has "embedding" + "vectors" → RELEVANT
+  Chunk 1: "Vector similarity measures meaning..."  ← has "vector" + "similarity" → RELEVANT
+  Chunk 2: "Dogs are mammals that bark."            ← has none → IRRELEVANT
+  Chunk 3: "Semantic fragmentation is a problem."   ← has "semantic" → RELEVANT
+  Chunk 4: "The stock market crashed."              ← has none → IRRELEVANT
+
+  Precision@5 = 3/5 = 0.60  (60% of retrieved chunks were relevant)</code></pre>
+
+  <h3>Recall@k</h3>
+  <p>"Of all the keywords that should be found, how many did we actually find?"</p>
+  <pre><code># Keywords: ["embedding", "vector", "semantic", "similarity", "dense"]
+# Found in retrieved chunks: "embedding", "vector", "semantic", "similarity"
+# Missing: "dense"
+
+  Recall@5 = 4/5 = 0.80  (we found 80% of the expected keywords)</code></pre>
+
+  <h3>Retrieval Score (AutoRAG's recipe)</h3>
+  <pre><code>Retrieval = 0.5 × Precision@k + 0.5 × Recall@k
+          = 0.5 × 0.60 + 0.5 × 0.80
+          = 0.70</code></pre>
+
+  <p>This feeds directly into the unified score as the <strong>Recall</strong> term (0.25 × retrieval). Bad retrieval naturally drags the score down — no early exit needed.</p>
+
+  <h3>Why no early exit?</h3>
+  <p>AutoRAG computes ALL metrics regardless of retrieval quality. Why? The diagnoser needs the full picture to classify failures:</p>
+  <ul>
+    <li><strong>F-01 Retrieval Miss</strong>: low precision + low recall + low faithfulness</li>
+    <li><strong>F-03 Hallucination</strong>: high precision + high recall + low faithfulness</li>
+  </ul>
+  <p>If we skipped evaluation when retrieval is bad, we couldn't tell these apart.</p>
+
+  <hr>
+
+  <h2>4. LLM-Judge Evaluation (AutoRAG's Exact Formula)</h2>
+
+  <p>The pipeline doesn't just generate an answer — it <strong>grades it</strong> using the same LLM-judge recipes as AutoRAG. Three judges, each asking a different question:</p>
+
+  <h3>Faithfulness Judge</h3>
+  <p>"Break the answer into individual claims. Is each claim supported by the context?"</p>
+  <pre><code># Judge prompt:
+"Step 1: Break the ANSWER into individual atomic claims.
+ Step 2: For EACH claim, determine if it is verifiable from the CONTEXT.
+ Step 3: Return faithfulness = supported_claims / total_claims."
+
+# Example:
+Answer: "Embeddings map text to vectors. Dogs bark."
+Context: "Embeddings map text to dense numerical vectors."
+
+Claims: ["Embeddings map text to vectors", "Dogs bark"]
+Supported: [true, false]
+Faithfulness: 1/2 = 0.50</code></pre>
+
+  <h3>Relevance Judge</h3>
+  <p>"Does the answer address the question asked?"</p>
+  <pre><code># Judge prompt:
+"Score 1.0 if the answer directly addresses the question.
+ Score 0.0 if the answer is about a different topic."
+
+# Example:
+Question: "How do embeddings work?"
+Answer: "Embeddings represent meaning by mapping words to vectors."
+→ Score: 0.95 (directly addresses the question)</code></pre>
+
+  <h3>Correctness Judge (only if ground truth exists)</h3>
+  <p>"Does the answer match the expected answer?"</p>
+  <pre><code># Judge prompt:
+"Score 1.0 if the answer conveys the same information as the expected answer.
+ Score 0.0 if the answer contradicts or misses the key facts."
+
+# Example:
+Expected: "Embeddings map text to dense vectors where similar texts have similar representations."
+Answer: "Embeddings represent meaning by mapping words to vectors where similar words are close."
+→ Score: 0.90 (conveys the same core idea)</code></pre>
+
+  <h3>The Unified Score Formula (AutoRAG v1.2)</h3>
+
+  <p>These three metrics combine into one score using AutoRAG's exact formula:</p>
+
+  <pre><code>Recall  = avg chunk similarity (proxy for context_precision + context_recall)
+Quality = 0.6 × correctness + 0.4 × relevance
+         (falls back to relevance alone if no ground truth)
+
+UnifiedScore = 0.25 × Recall + 0.35 × Quality + 0.25 × Faithfulness
+               − 0.10 × min(latency_ms / 3000, 1)
+               − 0.05 × min(cost_usd / 0.01, 1)
+
+# Example:
+Recall = 0.72, Quality = 0.85, Faithfulness = 0.80
+Latency = 1200ms, Cost = $0.0004
+
+Score = 0.25×0.72 + 0.35×0.85 + 0.25×0.80 − 0.10×(1200/3000) − 0.05×(0.0004/0.01)
+      = 0.18 + 0.2975 + 0.20 − 0.04 − 0.002
+      = 0.6355</code></pre>
+
+  <p><strong>Why these weights?</strong> Quality (answer quality) weighs most at 0.35. Recall and Faithfulness tie at 0.25 each — because a confident liar is worse than an incomplete retriever. Latency and cost are <em>penalties</em>, not scores — being slow or expensive can only drag a good score down, never make a bad one look good.</p>
+
+  <h3>State Map: Full Pipeline with Evaluation</h3>
+  <pre><code>BEFORE:  query = "How do embeddings work?"
+         config = {chunk_strategy: "fixed_size", chunk_size: 256, k: 5}
+
+  retrieval → 5 chunks with scores [0.87, 0.72, 0.65, 0.45, 0.30]
+  assembly  → context string (530 tokens)
+  generation → "Embeddings represent meaning by mapping..."
+  faithfulness judge → claims: ["Embeddings map text to vectors", ...]
+                       supported: [true, true, true, false]
+                       faithfulness = 0.75
+  relevance judge    → score: 0.90
+  correctness judge  → score: 0.85 (ground truth exists)
+  recall  = 0.60 (avg chunk similarity)
+  quality = 0.6×0.85 + 0.4×0.90 = 0.87
+  unified_score = 0.25×0.60 + 0.35×0.87 + 0.25×0.75 − penalties
+                = 0.61
+
+AFTER:   {
+           "answer": "Embeddings represent meaning by mapping...",
+           "unified_score": 0.61,
+           "faithfulness": 0.75,
+           "relevance": 0.90,
+           "correctness": 0.85,
+           "retrieval_score": 0.60,
+           "cost_usd": 0.0004,
+           "latency_ms": 1800
+         }</code></pre>
+
+  <hr>
+
+  <h2>Quiz</h2>
+
+  <ol>
+    <li>How does <code>assemble_context</code> decide which chunks to include?</li>
+    <li>What happens if a single chunk exceeds the token budget?</li>
+    <li>Why is <code>temperature=0.0</code> used in generation?</li>
+    <li>What's the difference between prompt v1 and v2? When would the optimizer switch?</li>
+    <li>How does the faithfulness judge work? What does it return?</li>
+    <li>What is precision@k? What is recall@k? How do they differ?</li>
+    <li>Why doesn't the pipeline skip evaluation when retrieval returns garbage?</li>
+    <li>What is the unified score formula? Why are latency and cost penalties, not scores?</li>
+  </ol>
+
+  <details>
+    <summary>Reveal answers</summary>
+    <ol>
+      <li>Sorts chunks by score descending, then adds them one by one until adding the next would exceed <code>max_tokens</code>. This is greedy fill — highest quality first.</li>
+      <li>If it's the first chunk (no chunks selected yet), it's included anyway — no partial truncation. If other chunks are already selected, the oversized chunk is skipped.</li>
+      <li>Temperature=0.0 makes generation deterministic. For evaluation, we want the same answer every time we run the same config — non-determinism would make score comparison meaningless.</li>
+      <li>v2 adds "Every claim MUST be directly supported by a sentence in the Context" and "Do not add information not present." The optimizer switches to v2 when diagnosing F-03 (Hallucination) — stricter grounding reduces fabrication.</li>
+      <li>The faithfulness judge breaks the answer into individual atomic claims, then verifies each claim against the context. It returns faithfulness = supported_claims / total_claims (0.0 to 1.0).</li>
+      <li><strong>Precision@k</strong>: fraction of top-k retrieved chunks that are relevant (contain at least one ground truth keyword). <strong>Recall@k</strong>: fraction of ground truth keywords found in the top-k chunks. Precision answers "how much of what I retrieved was useful?" Recall answers "how much of the useful stuff did I find?"</li>
+      <li>AutoRAG computes all metrics regardless because the diagnoser needs the full picture to classify failures. Without evaluation, we can't distinguish F-01 (bad retrieval) from F-03 (good retrieval, hallucinated answer). The unified score naturally penalizes bad retrieval through the Recall term (0.25×retrieval).</li>
+      <li>UnifiedScore = 0.25×Recall + 0.35×Quality + 0.25×Faithfulness − 0.10×min(latency/3000, 1) − 0.05×min(cost/0.01, 1). Latency and cost are penalties because being slow or expensive can only drag a good score down — they can never make a bad pipeline look good.</li>
+    </ol>
+  </details>
+
+  <hr>
+
+  <p><strong>Follow-up questions?</strong> Ask me anything about this lesson.</p>
+
+  <p><a href="03-retrieval.html">← Lesson 3 (Retrieval)</a> | <a href="05-pipeline.html">Next: Lesson 5 (Full Pipeline) →</a></p>
+</body>
+</html>

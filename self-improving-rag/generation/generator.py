@@ -1,12 +1,13 @@
-"""LLM generation via active provider (EURI or Google Gemini)."""
+"""LLM generation via llm_call() with provider failover.
 
-import time
-from openai import OpenAI
-from config import (
-    LLM_API_KEY, LLM_BASE_URL, LLM_MODEL,
-    PRICE_INPUT_PER_M, PRICE_OUTPUT_PER_M,
-)
-from prompts import SYSTEM_PROMPT, QA_TEMPLATE, PROMPT_TEMPLATES
+Uses agents/llm_utils.py as the single entry point for all LLM calls.
+"""
+
+import logging
+from agents.llm_utils import llm_call
+from prompts import PROMPT_TEMPLATES
+
+logger = logging.getLogger(__name__)
 
 
 def generate(
@@ -14,7 +15,11 @@ def generate(
     question: str,
     prompt_version: str = "v1",
 ) -> dict:
-    """Call EURI LLM with assembled context + question, return answer + metadata.
+    """Call LLM with assembled context + question, return answer + metadata.
+
+    Uses llm_call() for provider failover (EURI → Google).
+    Cost is computed inside llm_call() — cost calculation is centralized
+    there, never in agent nodes.
 
     Args:
         context: Assembled context string from assemble_context().
@@ -30,35 +35,23 @@ def generate(
 
     user_prompt = qa_template.format(context=context, question=question)
 
-    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
-
-    start = time.perf_counter()
-    resp = client.chat.completions.create(
-        model=LLM_MODEL,
+    response = llm_call(
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.0,  # deterministic for evaluation consistency
-    )
-    latency_ms = int((time.perf_counter() - start) * 1000)
-
-    answer = resp.choices[0].message.content or ""
-    input_tokens = resp.usage.prompt_tokens
-    output_tokens = resp.usage.completion_tokens
-
-    # Cost accounting
-    cost_usd = (
-        (input_tokens / 1_000_000) * PRICE_INPUT_PER_M
-        + (output_tokens / 1_000_000) * PRICE_OUTPUT_PER_M
+        model_key="chat_model",
+        temperature=0.0,
+        agent_name="generator",
     )
 
     return {
-        "answer": answer.strip(),
-        "cost_usd": round(cost_usd, 6),
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "latency_ms": latency_ms,
-        "model": LLM_MODEL,
+        "answer": response.content.strip(),
+        "cost_usd": response.cost_usd,
+        "input_tokens": response.prompt_tokens,
+        "output_tokens": response.completion_tokens,
+        "latency_ms": response.latency_ms,
+        "model": response.model,
+        "provider": response.provider,
         "prompt_version": prompt_version,
     }

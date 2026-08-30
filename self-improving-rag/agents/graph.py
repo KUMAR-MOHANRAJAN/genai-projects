@@ -2,20 +2,21 @@
 
 LINEAR graph — one pass per invocation. The optimizer service handles
 all retry/improvement logic externally by calling this graph repeatedly
-with different configs. This matches the parent project's architecture
-(dev branch: OptimizerService dispatches full graph runs from outside).
+with different configs.
 
 Nodes:
-  pipeline_node   — retrieve + assemble context + generate answer
+  builder_node    — ingest-if-needed + retrieval (from agents/builder.py)
+  pipeline_node   — assemble context + generate answer (NO retrieval)
   evaluator_node  — 3 LLM judges + unified score + gate decision
   hitl_node       — interrupt() for human approval in gray band
   diagnoser_node  — rule-cascade failure classification (F-01..F-05)
   improver_node   — playbook lookup + config delta → candidate config
 
-Routing after evaluator:
-  deploy_eligible → END (answer is good enough)
-  hitl_required   → hitl_node → END (approve) or diagnoser (reject)
-  hard_block      → diagnoser → improver → END (candidates in state)
+Graph flow:
+  START → builder → pipeline → evaluator → [route]
+    deploy_eligible → END
+    hitl_required   → hitl → END (approve) or diagnoser (reject)
+    hard_block      → diagnoser → improver → END (candidates in state)
 
 The graph NEVER loops. After one pass, the final state contains:
   - The answer + scores (always)
@@ -24,8 +25,7 @@ The graph NEVER loops. After one pass, the final state contains:
 The optimizer reads improver_candidates from the result and decides
 whether to apply the winner and dispatch another graph run.
 
-Origin: AutoRAG's app/graph/workflow.py (dev branch — linear, no loop)
-        OptimizerService handles retry externally.
+Architecture: Linear StateGraph with conditional routing and external optimizer.
 """
 
 import sys
@@ -41,81 +41,48 @@ from langgraph.types import interrupt, Command
 from langgraph.checkpoint.memory import MemorySaver
 
 from state import RunState
-from config import DEFAULT_CONFIG, INGEST_PAGES, INGEST_START_PAGE
-from retrieval.search import search
+from config import DEFAULT_CONFIG
 from generation.context_assembly import assemble_context
 from generation.generator import generate
-from ingest import ingest
-from vector_store import ChromaStore
+from agents.builder import builder_node
 from agents.evaluator import evaluator_node
 from agents.diagnoser import diagnoser_node
 from agents.improver import improver_node
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Pipeline Node — retrieve + assemble + generate (NO evaluation)
+# Pipeline Node — assemble context + generate (NO ingestion or retrieval)
 #
-# This is the "do work" node. It takes the current config from state,
-# runs the RAG pipeline steps, and writes the results to state.
-# Evaluation is a SEPARATE node so the optimizer can see the scores.
+# Builder handles ingestion + retrieval. This node receives pre-retrieved
+# chunks from state and focuses on context assembly + LLM generation.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def pipeline_node(state: RunState) -> dict:
-    """LangGraph node: run the RAG pipeline (retrieve → assemble → generate).
+    """LangGraph node: assemble context + generate answer.
+
+    Builder has already populated state with retrieved_chunks.
 
     Reads from state:
-      - query, config, version
+      - query, config
+      - retrieved_chunks (from builder_node)
 
     Writes to state:
-      - retrieved_chunks, chunk_count
       - context, context_tokens
       - answer, generation_cost_usd, generation_latency_ms
-      - collection_name
     """
     query = state["query"]
     cfg = state.get("config", copy.deepcopy(DEFAULT_CONFIG))
-    version = state.get("version", "v1")
+    chunks = state.get("retrieved_chunks", [])
 
-    # Build collection name from config (changes when chunk_size/strategy change)
-    strategy = cfg.get("chunk_strategy", "fixed_size")
-    chunk_size = cfg.get("chunk_size", 256)
-    chunk_overlap = cfg.get("chunk_overlap", 0)
-    collection_name = f"rag_{version}_{strategy}_{chunk_size}"
-
-    # ── Step 0: Auto-ingest if collection doesn't exist ───────────────────
-    # When the improver changes chunk_size or strategy, the collection name
-    # changes (e.g., rag_v1_fixed_size_320). If that collection doesn't exist
-    # yet, we need to re-ingest the corpus with the new chunking params.
-    # This matches the parent project where every optimizer iteration
-    # re-runs ingestion (full pipeline from scratch).
-    store = ChromaStore(collection_name)
-    if store.count() == 0:
-        print(f"  [pipeline] Collection '{collection_name}' is empty — auto-ingesting...")
-        ingest(
-            strategy=strategy,
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            version=version,
-            pages=INGEST_PAGES,
-            start_page=INGEST_START_PAGE,
-        )
-
-    # ── Step 1: Retrieval ─────────────────────────────────────────────────
-    k = cfg.get("retrieval_k", 5)
-    chunks = search(collection_name, query, k=k)
-
-    # ── Step 2: Context Assembly ──────────────────────────────────────────
+    # ── Step 1: Context Assembly ──────────────────────────────────────────
     max_tokens = cfg.get("max_context_tokens", 4000)
     context, context_tokens = assemble_context(chunks, max_tokens=max_tokens)
 
-    # ── Step 3: Generation ────────────────────────────────────────────────
+    # ── Step 2: Generation ────────────────────────────────────────────────
     prompt_version = cfg.get("prompt_template", "v1")
     gen_result = generate(context, query, prompt_version=prompt_version)
 
     return {
-        "collection_name": collection_name,
-        "retrieved_chunks": chunks,
-        "chunk_count": len(chunks),
         "context": context,
         "context_tokens": context_tokens,
         "answer": gen_result["answer"],
@@ -209,6 +176,7 @@ def build_graph(checkpointer=None):
     graph = StateGraph(RunState)
 
     # ── Register Nodes ────────────────────────────────────────────────────
+    graph.add_node("builder", builder_node)
     graph.add_node("pipeline", pipeline_node)
     graph.add_node("evaluator", evaluator_node)
     graph.add_node("hitl", hitl_node)
@@ -217,8 +185,11 @@ def build_graph(checkpointer=None):
 
     # ── Edges ─────────────────────────────────────────────────────────────
 
-    # START → pipeline (always start by running the RAG pipeline)
-    graph.add_edge(START, "pipeline")
+    # START → builder (ingest if needed, then retrieve)
+    graph.add_edge(START, "builder")
+
+    # builder → pipeline (context assembly + generation)
+    graph.add_edge("builder", "pipeline")
 
     # pipeline → evaluator (always evaluate after generating)
     graph.add_edge("pipeline", "evaluator")
@@ -251,7 +222,7 @@ def build_graph(checkpointer=None):
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("GRAPH — Structure Verification (Linear, Option B)")
+    print("GRAPH — Structure Verification (Linear, with Builder)")
     print("=" * 70)
 
     app = build_graph()
@@ -265,11 +236,13 @@ if __name__ == "__main__":
 
     print(f"\nGraph compiled successfully with {len(graph_obj.nodes)} nodes.")
     print("\nExpected flow (linear — no loop):")
-    print("  START → pipeline → evaluator → [route]")
+    print("  START → builder → pipeline → evaluator → [route]")
     print("    deploy_eligible → END")
     print("    hitl_required   → hitl → [approve→END | reject→diagnoser]")
     print("    hard_block      → diagnoser → improver → END")
     print()
+    print("  Builder handles: ingest-if-needed + retrieval")
+    print("  Pipeline handles: context assembly + generation")
     print("  Optimizer reads improver_candidates from result and decides")
     print("  whether to dispatch another graph run with the new config.")
     print()
