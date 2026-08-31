@@ -26,6 +26,7 @@ from ingest import ingest
 from vector_store import ChromaStore
 from retrieval.search import search
 from utils import build_collection_name
+from agents.trace import traced_node
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Builder Node — LangGraph node function
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+@traced_node("builder")
 def builder_node(state: RunState) -> dict:
     """LangGraph node: ingest if needed, then retrieve.
 

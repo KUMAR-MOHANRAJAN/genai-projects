@@ -75,6 +75,8 @@ def _iteration_record(
         "chunk_count": result.get("chunk_count", 0),
         "context_tokens": result.get("context_tokens", 0),
         "applied_variant": applied_variant,
+        "execution_trace": result.get("execution_trace", []),
+        "judge_details": result.get("judge_details", {}),
     }
 
 

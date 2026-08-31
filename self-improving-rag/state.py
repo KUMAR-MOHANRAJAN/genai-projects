@@ -4,7 +4,8 @@ Mirrors AutoRAG's GraphState (app/core/state.py) but simplified for learning.
 Every node reads and writes fields from this shared state.
 """
 
-from typing import TypedDict, Any
+import operator
+from typing import TypedDict, Any, Annotated
 
 
 class RunState(TypedDict, total=False):
@@ -46,6 +47,7 @@ class RunState(TypedDict, total=False):
     cost_usd: float
     latency_ms: int
     judge_reasoning: dict[str, str]    # {metric_name: reasoning} — feeds diagnoser
+    judge_details: dict[str, dict]     # {metric_name: {claims, supported, reasoning, ...}}
 
     # Diagnosis (filled by diagnoser node)
     failure_type: str               # "F-01", "F-02", "F-03", "F-04", "F-05"
@@ -61,6 +63,11 @@ class RunState(TypedDict, total=False):
     # entry to use — attempt 0 = conservative, 1 = moderate, 2 = aggressive)
     improvement_attempt: int
 
+    # Execution trace (filled by agents/trace.py's traced_node wrapper).
+    # Annotated with operator.add so each node's single-event list is
+    # concatenated onto the running trace instead of overwriting it.
+    execution_trace: Annotated[list[dict], operator.add]
+
 
 def initial_state(
     query: str,
@@ -73,4 +80,5 @@ def initial_state(
         config=config,
         version=version,
         improvement_attempt=0,
+        execution_trace=[],
     )

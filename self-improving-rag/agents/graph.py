@@ -48,6 +48,7 @@ from agents.builder import builder_node
 from agents.evaluator import evaluator_node
 from agents.diagnoser import diagnoser_node
 from agents.improver import improver_node
+from agents.trace import traced_node
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -57,6 +58,7 @@ from agents.improver import improver_node
 # chunks from state and focuses on context assembly + LLM generation.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+@traced_node("pipeline")
 def pipeline_node(state: RunState) -> dict:
     """LangGraph node: assemble context + generate answer.
 
@@ -176,6 +178,8 @@ def build_graph(checkpointer=None):
     graph = StateGraph(RunState)
 
     # ── Register Nodes ────────────────────────────────────────────────────
+    # Each node function owns its @traced_node decorator (except hitl, which
+    # uses interrupt() control flow) — see agents/trace.py.
     graph.add_node("builder", builder_node)
     graph.add_node("pipeline", pipeline_node)
     graph.add_node("evaluator", evaluator_node)
