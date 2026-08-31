@@ -50,6 +50,22 @@ BOOK_PATHS = [
     os.path.join(os.path.dirname(__file__), "corpus", "Hands-On_Large_Language_Models_-_Jay_Alammar.txt"),
     os.path.join(os.path.dirname(__file__), "corpus", "AI Engineering_ Building Applications With Foundation Models by Chip Huyen (1).txt"),
 ]
+
+# ─── Multi-file demo corpus (whole-document ingestion, no page windowing) ────
+# 9 short business documents across 4 domains (HR, Technical, Legal, Finance),
+# curated for genuine cross-domain golden-set queries. See ground_truth.py.
+CORPUS_DIR = os.path.join(os.path.dirname(__file__), "corpus")
+CORPUS_FILES = [
+    os.path.join(CORPUS_DIR, "hr", "leave_policy.txt"),
+    os.path.join(CORPUS_DIR, "hr", "benefits_guide.txt"),
+    os.path.join(CORPUS_DIR, "hr", "code_of_conduct.txt"),
+    os.path.join(CORPUS_DIR, "technical", "production_runbook.txt"),
+    os.path.join(CORPUS_DIR, "technical", "developer_setup_guide.txt"),
+    os.path.join(CORPUS_DIR, "legal", "vendor_contract_template.txt"),
+    os.path.join(CORPUS_DIR, "legal", "nda_template.txt"),
+    os.path.join(CORPUS_DIR, "finance", "expense_policy.txt"),
+    os.path.join(CORPUS_DIR, "finance", "budget_guidelines_2026.txt"),
+]
 CHROMA_PERSIST_DIR = os.path.join(os.path.dirname(__file__), "data", "chroma")
 
 # ─── Pipeline knobs (optimizer sweeps these) ─────────────────────────────────

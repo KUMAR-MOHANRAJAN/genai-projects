@@ -30,16 +30,22 @@ def build_collection_name(config: dict, version: str = "v1") -> str:
     previously-measured version — this is how honest before/after
     comparisons work in the optimizer loop.
 
+    chunk_overlap is included so a config change that only touches overlap
+    still produces a new collection name — otherwise ingestion would be
+    silently skipped (collection already has chunks) and the new overlap
+    would never actually take effect.
+
     Args:
-        config: Pipeline config dict with chunk_strategy and chunk_size.
+        config: Pipeline config dict with chunk_strategy, chunk_size, chunk_overlap.
         version: Version string (e.g. "v1", "v2").
 
     Returns:
-        Collection name like "rag_v1_fixed_size_256".
+        Collection name like "rag_v1_fixed_size_256_o0".
     """
     strategy = config.get("chunk_strategy", "fixed_size")
     chunk_size = config.get("chunk_size", 256)
-    return f"rag_{version}_{strategy}_{chunk_size}"
+    chunk_overlap = config.get("chunk_overlap", 0)
+    return f"rag_{version}_{strategy}_{chunk_size}_o{chunk_overlap}"
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
