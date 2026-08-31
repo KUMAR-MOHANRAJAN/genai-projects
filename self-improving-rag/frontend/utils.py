@@ -33,13 +33,30 @@ CORPUS_DIR = os.path.join(PROJECT_ROOT, "corpus")
 
 
 def list_corpus_files() -> list[str]:
-    """List all .txt and .pdf files in the corpus directory."""
+    """List all .txt and .pdf files directly in the corpus directory (flat,
+    legacy single-book layout)."""
     if not os.path.isdir(CORPUS_DIR):
         return []
     return sorted(
         f for f in os.listdir(CORPUS_DIR)
         if f.lower().endswith((".txt", ".pdf"))
     )
+
+
+def list_corpus_files_recursive() -> list[str]:
+    """Discover every .txt/.pdf file under corpus/, including domain
+    subfolders (corpus/hr/, corpus/technical/, etc.). Returns paths relative
+    to CORPUS_DIR (e.g. "hr/leave_policy.txt") for display and lookup.
+    """
+    if not os.path.isdir(CORPUS_DIR):
+        return []
+    found = []
+    for root, _dirs, files in os.walk(CORPUS_DIR):
+        for f in files:
+            if f.lower().endswith((".txt", ".pdf")):
+                rel = os.path.relpath(os.path.join(root, f), CORPUS_DIR)
+                found.append(rel.replace(os.sep, "/"))
+    return sorted(found)
 
 
 def save_uploaded_file(uploaded_file) -> str:
@@ -139,22 +156,31 @@ def get_collections() -> list[dict]:
 def parse_collection_name(name: str) -> dict:
     """Parse collection name into config components.
 
-    'rag_g1_fixed_size_256' → {version: 'g1', strategy: 'fixed_size', chunk_size: 256}
+    'rag_g1_fixed_size_256_o0' → {version: 'g1', strategy: 'fixed_size', chunk_size: 256, chunk_overlap: 0}
     """
     parts = name.split("_")
-    # Format: rag_{version}_{strategy_word1}_{strategy_word2}_{chunk_size}
-    # e.g., rag_g1_fixed_size_256
-    if len(parts) >= 5 and parts[0] == "rag":
+    # Format: rag_{version}_{strategy_word1..N}_{chunk_size}_o{overlap}. Older
+    # collections (pre-overlap-in-name) won't have the trailing "oN" part —
+    # default overlap to 0 for those. Falls back to defaults on any mismatch
+    # (e.g. single-word "semantic" strategy has fewer underscore-separated parts).
+    try:
+        if parts[0] != "rag":
+            raise ValueError("not a rag collection name")
         version = parts[1]
-        # Strategy is everything between version and the last part (chunk_size)
+        overlap = 0
+        if parts[-1][:1] == "o" and parts[-1][1:].isdigit():
+            overlap = int(parts[-1][1:])
+            parts = parts[:-1]
         chunk_size = int(parts[-1])
         strategy = "_".join(parts[2:-1])
         return {
             "version": version,
             "chunk_strategy": strategy,
             "chunk_size": chunk_size,
+            "chunk_overlap": overlap,
         }
-    return {"version": "g1", "chunk_strategy": "fixed_size", "chunk_size": 256}
+    except (IndexError, ValueError):
+        return {"version": "g1", "chunk_strategy": "fixed_size", "chunk_size": 256, "chunk_overlap": 0}
 
 
 def collection_label(col: dict) -> str:

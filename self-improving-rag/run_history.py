@@ -44,7 +44,7 @@ def _slim_iterations(iterations: list[dict]) -> list[dict]:
             "cost_usd": rec.get("cost_usd"),
             "latency_ms": rec.get("latency_ms"),
             "chunk_count": rec.get("chunk_count", 0),
-            "answer_preview": (rec.get("answer", "") or "")[:200],
+            "answer_preview": rec.get("answer", "") or "",
         }
         variant = rec.get("applied_variant")
         if variant:
@@ -54,6 +54,8 @@ def _slim_iterations(iterations: list[dict]) -> list[dict]:
                 "delta": variant.get("delta"),
                 "rationale": variant.get("rationale"),
             }
+        entry["execution_trace"] = rec.get("execution_trace", [])
+        entry["judge_details"] = rec.get("judge_details", {})
         slim.append(entry)
     return slim
 
@@ -91,7 +93,9 @@ def save_query_run(query: str, config: dict, result: dict, version: str = "v1") 
         "cost_usd": result.get("cost_usd", result.get("generation_cost_usd", 0)),
         "latency_ms": result.get("latency_ms", result.get("generation_latency_ms", 0)),
         "chunk_count": result.get("chunk_count", 0),
-        "answer_preview": (result.get("answer", "") or "")[:200],
+        "answer_preview": result.get("answer", "") or "",
+        "execution_trace": result.get("execution_trace", []),
+        "judge_details": result.get("judge_details", {}),
     }
     _append(record)
     return record

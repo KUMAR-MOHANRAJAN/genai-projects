@@ -19,7 +19,8 @@ _project_root = os.path.dirname(_frontend_dir)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from agents.diagnoser import diagnoser_node
+from agents.diagnoser import diagnoser_node, _is_abstention
+from pipeline import _compute_quality_score
 
 # Import frontend utilities — use importlib to avoid collision with
 # project-root utils.py (both are named "utils").
@@ -30,7 +31,7 @@ _spec = importlib.util.spec_from_file_location(
 _fe_utils = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_fe_utils)
 
-list_corpus_files = _fe_utils.list_corpus_files
+list_corpus_files_recursive = _fe_utils.list_corpus_files_recursive
 save_uploaded_file = _fe_utils.save_uploaded_file
 run_query = _fe_utils.run_query
 get_ground_truth_queries = _fe_utils.get_ground_truth_queries
@@ -41,12 +42,261 @@ load_history = _fe_utils.load_history
 clear_history = _fe_utils.clear_history
 get_collections = _fe_utils.get_collections
 parse_collection_name = _fe_utils.parse_collection_name
+build_collection_name = _fe_utils.build_collection_name
 collection_label = _fe_utils.collection_label
 CORPUS_DIR = _fe_utils.CORPUS_DIR
 DEFAULT_CONFIG = _fe_utils.DEFAULT_CONFIG
 BAD_CONFIG = _fe_utils.BAD_CONFIG
 INGEST_PAGES = _fe_utils.INGEST_PAGES
-INGEST_START_PAGE = _fe_utils.INGEST_START_PAGE
+
+
+def _render_judge_details(judge_details: dict, key_prefix: str):
+    """Render per-judge breakdown: claims for faithfulness, reasoning for the rest.
+
+    Collapsible via a selectbox (same interaction as the execution trace
+    inspector) rather than always showing every judge at once.
+    """
+    if not judge_details:
+        return
+
+    available = [name for name in ("faithfulness", "relevance", "correctness") if judge_details.get(name)]
+    if not available:
+        return
+
+    st.markdown("**Judge Breakdown**")
+    picked = st.selectbox("Inspect judge", available, key=f"judge_pick_{key_prefix}")
+    detail = judge_details.get(picked, {})
+
+    if picked == "faithfulness" and detail.get("claims"):
+        claims = detail["claims"]
+        supported = detail.get("supported", [])
+        rows = [
+            {"claim": c, "supported": (supported[i] if i < len(supported) else None)}
+            for i, c in enumerate(claims)
+        ]
+        st.dataframe(rows, use_container_width=True, hide_index=True, key=f"judge_faith_{key_prefix}")
+    elif detail.get("reasoning"):
+        st.caption(detail["reasoning"])
+        if picked == "correctness" and detail.get("expected_answer"):
+            st.caption(f"Expected: \"{detail['expected_answer'][:150]}\"")
+
+
+def _format_config(cfg: dict) -> str:
+    return (
+        f"k={cfg.get('retrieval_k')}, "
+        f"chunk={cfg.get('chunk_size')}, "
+        f"overlap={cfg.get('chunk_overlap')}, "
+        f"prompt={cfg.get('prompt_template')}"
+    )
+
+
+def _resolve_next_config(rec: dict, iterations_list: list, it_num, final_config: dict | None = None):
+    """Find the config the improver's fix actually produced.
+
+    Prefers applied_variant['config_after'] (present on live/in-memory
+    reports); falls back to the next iteration's recorded config (still
+    correct after history's slimming strips config_after); falls back to
+    the run's final_config if this was the last iteration.
+    """
+    variant = rec.get("applied_variant") or {}
+    if variant.get("config_after"):
+        return variant["config_after"]
+    for other in iterations_list:
+        if other.get("iteration") == it_num + 1:
+            return other.get("config")
+    return final_config
+
+
+def _render_diagnosis_block(failure_type: str, remediation_hint: str):
+    """Highlight the diagnoser's finding so it doesn't blend into plain text."""
+    if remediation_hint:
+        st.warning(f"**Diagnosis {failure_type}:** {remediation_hint}")
+
+
+def _render_applied_variant(variant: dict, next_config: dict | None = None):
+    """Highlight the fix the improver proposed — this changes the config for
+    the NEXT iteration, not the one that produced the answer above."""
+    if not variant:
+        return
+    lines = [
+        f"**Fix Applied → Next Iteration's Config ({variant.get('variant_id', '?')}):** "
+        f"{variant.get('rationale', 'N/A')}",
+        f"**Delta:** `{variant.get('delta', {})}`",
+    ]
+    if next_config:
+        lines.append(f"**Resulting Config:** {_format_config(next_config)}")
+    st.info("  \n".join(lines))
+
+
+def _render_answer_block(answer: str, max_len: int = 800):
+    """Show the generated answer, highlighting abstentions distinctly."""
+    if not answer:
+        return
+    text = answer[:max_len]
+    if _is_abstention(answer):
+        st.error(f"**Answer (abstained):** {text}")
+    else:
+        st.success(f"**Answer:** {text}")
+
+
+def _render_execution_trace(trace: list, key_prefix: str):
+    """Render one iteration's append-only execution_trace as a compact table
+    plus per-event input/output summaries.
+
+    Note: no st.expander here — Streamlit forbids nesting expanders, and this
+    is always called from within an already-open iteration expander.
+    """
+    if not trace:
+        return
+    rows = [
+        {
+            "node": ev.get("node"),
+            "status": ev.get("status"),
+            "latency_ms": ev.get("latency_ms"),
+            "tokens": ev.get("tokens"),
+            "cost_usd": ev.get("cost_usd"),
+            "error": ev.get("error"),
+        }
+        for ev in trace
+    ]
+    st.markdown("**Execution Trace**")
+    st.dataframe(rows, use_container_width=True, hide_index=True, key=f"trace_{key_prefix}")
+
+    labels = [
+        f"{i}: {ev.get('node')} ({ev.get('status')})"
+        for i, ev in enumerate(trace)
+    ]
+    picked = st.selectbox(
+        "Inspect node input/output", labels, key=f"trace_pick_{key_prefix}"
+    )
+    ev = trace[labels.index(picked)]
+    io_cols = st.columns(2)
+    with io_cols[0]:
+        st.markdown("**Input**")
+        st.json(ev.get("input_summary", {}))
+    with io_cols[1]:
+        st.markdown("**Output**")
+        st.json(ev.get("output_summary", {}))
+
+
+def _fmt(val, fmt=".2f", prefix="", suffix=""):
+    if val is None:
+        return "-"
+    if isinstance(val, (int, float)) and val == 0:
+        return "-"
+    return f"{prefix}{val:{fmt}}{suffix}"
+
+
+def _render_unified_score_breakdown(rec: dict, key_prefix: str):
+    """Show the unified score arithmetic (mirrors _compute_unified_score in pipeline.py).
+
+    Reuses the real _compute_quality_score() for the quality sub-score so
+    this display can't drift from the actual scoring logic; the weight
+    re-normalization and penalties are re-derived here purely for display.
+    """
+    recall = rec.get("retrieval_score")
+    faithfulness = rec.get("faithfulness")
+    quality = _compute_quality_score(rec.get("relevance"), rec.get("correctness"))
+
+    MAX_QUERY_COST = 0.01
+    latency_penalty = 0.10 * min((rec.get("latency_ms") or 0) / 3000.0, 1.0)
+    cost_penalty = 0.05 * min((rec.get("cost_usd") or 0.0) / MAX_QUERY_COST, 1.0)
+
+    terms = []
+    if recall is not None:
+        terms.append(("Retrieval (Recall)", 0.25, recall))
+    if quality is not None:
+        terms.append(("Quality (0.6×Correctness + 0.4×Relevance)", 0.35, quality))
+    if faithfulness is not None:
+        terms.append(("Faithfulness", 0.25, faithfulness))
+
+    raw_weight_sum = sum(w for _, w, _ in terms)
+    scale = 0.85 / raw_weight_sum if raw_weight_sum > 0 else 1.0
+
+    st.markdown("**Unified Score Calculation**")
+    st.caption(
+        "Score = Σ(effective weight × value) − latency penalty − cost penalty. "
+        "Weights re-normalize to sum to 0.85 when a metric is missing (no fabricated scores)."
+    )
+    if terms:
+        rows = [
+            {
+                "term": name,
+                "base weight": w,
+                "value": round(v, 4),
+                "effective weight": round(w * scale, 4),
+                "contribution": round(w * scale * v, 4),
+            }
+            for name, w, v in terms
+        ]
+        st.dataframe(rows, use_container_width=True, hide_index=True, key=f"score_calc_{key_prefix}")
+
+    pen_cols = st.columns(2)
+    with pen_cols[0]:
+        st.metric("Latency Penalty", f"-{latency_penalty:.4f}")
+    with pen_cols[1]:
+        st.metric("Cost Penalty", f"-{cost_penalty:.4f}")
+
+    computed = round(max(0.0, min(1.0, sum(w * scale * v for _, w, v in terms) - latency_penalty - cost_penalty)), 4)
+    st.caption(f"= **{computed}** (recorded unified score: {rec.get('unified_score')})")
+
+
+def _render_iteration_workflow(
+    rec: dict, iterations_list: list, it_num: int, key_prefix: str,
+    final_config: dict | None, query: str,
+):
+    """Render one iteration in the order the graph actually executes it:
+    input (query/config) -> answer (builder+pipeline) -> evaluation
+    (evaluator) -> diagnosis (diagnoser) -> fix (improver) -> cost.
+    Shared by the Optimizer tab and the History tab so both stay in sync.
+    """
+    st.markdown("**Input**")
+    st.caption(f"Query: {query}")
+    st.caption(f"Config used this iteration: {_format_config(rec.get('config', {}))}")
+
+    st.divider()
+    st.markdown("**Answer**")
+    _render_answer_block(rec.get("answer") or rec.get("answer_preview", ""))
+
+    st.divider()
+    st.markdown("**Evaluation**")
+    score_cols = st.columns(5)
+    with score_cols[0]:
+        st.metric("Faithfulness", _fmt(rec.get("faithfulness")))
+    with score_cols[1]:
+        st.metric("Relevance", _fmt(rec.get("relevance")))
+    with score_cols[2]:
+        st.metric("Correctness", _fmt(rec.get("correctness")))
+    with score_cols[3]:
+        st.metric("Retrieval", _fmt(rec.get("retrieval_score")))
+    with score_cols[4]:
+        st.metric("Unified", _fmt(rec.get("unified_score"), ".4f"))
+    _render_judge_details(rec.get("judge_details", {}), key_prefix=key_prefix)
+    _render_unified_score_breakdown(rec, key_prefix=key_prefix)
+
+    if rec.get("failure_type"):
+        st.divider()
+        st.markdown("**Diagnosis**")
+        _render_diagnosis_block(rec["failure_type"], rec.get("remediation_hint", ""))
+
+    if rec.get("applied_variant"):
+        st.divider()
+        st.markdown("**Fix → Next Iteration's Config**")
+        next_cfg = _resolve_next_config(rec, iterations_list, it_num, final_config)
+        _render_applied_variant(rec.get("applied_variant"), next_cfg)
+
+    st.divider()
+    st.markdown("**Cost for This Iteration**")
+    meta_cols = st.columns(3)
+    with meta_cols[0]:
+        st.metric("Cost", f"${rec.get('cost_usd') or 0:.4f}")
+    with meta_cols[1]:
+        st.metric("Latency", f"{rec.get('latency_ms', 0)}ms")
+    with meta_cols[2]:
+        st.metric("Chunks", rec.get("chunk_count", 0))
+
+    _render_execution_trace(rec.get("execution_trace", []), key_prefix=key_prefix)
+
 
 # ─── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -58,14 +308,23 @@ st.set_page_config(
 # ─── Tab Navigation (session-state driven, survives reruns) ───────────────────
 TAB_OPTIONS = ["Test Playground", "Optimizer", "History"]
 
-# Allow programmatic tab switching via session state
-if "active_tab" not in st.session_state:
-    st.session_state["active_tab"] = TAB_OPTIONS[0]
+# nav_radio is the widget's own key — it's the single source of truth.
+# Once a keyed widget has a value in session_state, Streamlit ignores the
+# index= argument on every later rerun, so programmatic tab switches must
+# write to nav_radio directly. But Streamlit also forbids setting a keyed
+# widget's state AFTER it's instantiated in the same run — buttons further
+# down the script can't touch nav_radio directly (it's already rendered by
+# the time they run). So they stash the target tab in "_pending_tab"
+# instead, and we apply it here, before the widget is created.
+if "_pending_tab" in st.session_state:
+    st.session_state["nav_radio"] = st.session_state.pop("_pending_tab")
+
+if "nav_radio" not in st.session_state:
+    st.session_state["nav_radio"] = TAB_OPTIONS[0]
 
 active_tab = st.radio(
     "Navigation",
     TAB_OPTIONS,
-    index=TAB_OPTIONS.index(st.session_state["active_tab"]),
     horizontal=True,
     key="nav_radio",
     label_visibility="collapsed",
@@ -85,7 +344,8 @@ if active_tab == "Test Playground":
     )
 
     # ── Setup Section ─────────────────────────────────────────────────────
-    st.subheader("1. Collection")
+    st.subheader("1. Corpus / Ingestion")
+    st.caption("Selects the underlying corpus and chunking scheme (the fixed, ingested part of the config).")
 
     # Two paths: select existing collection OR ingest new
     collections = get_collections()
@@ -99,6 +359,14 @@ if active_tab == "Test Playground":
         st.session_state["pg_max_context_tokens"] = opt_cfg_back.get("max_context_tokens", 4000)
         if opt_coll_back:
             st.session_state["pg_selected_collection"] = opt_coll_back
+            existing_names = [c["name"] for c in collections]
+            if opt_coll_back in existing_names:
+                # pg_collection_select is the selectbox's own key and stores
+                # the display *label*, not the raw name — index= alone won't
+                # move it once the key already has a value, so set it directly.
+                st.session_state["pg_collection_select"] = collection_label(
+                    collections[existing_names.index(opt_coll_back)]
+                )
         st.info(
             f"Config loaded from Optimizer: k={opt_cfg_back.get('retrieval_k')}, "
             f"collection={opt_coll_back or 'auto'}"
@@ -137,93 +405,119 @@ if active_tab == "Test Playground":
         st.warning("No collections found. Ingest a document first.")
         selected_collection = None
 
-    # Ingest new collection (expandable)
-    with st.expander("Ingest new collection"):
-        corpus_files = list_corpus_files()
-        if corpus_files:
-            ing_doc = st.selectbox(
-                "Document", corpus_files, key="ing_doc"
+    # Ingest documents — pick any subset of the corpus and the chunking
+    # config to ingest them with. Defaults to selecting everything (the
+    # golden query set in ground_truth.py assumes the full 9-doc corpus).
+    all_corpus_files = list_corpus_files_recursive()
+    if all_corpus_files:
+        ing_selected = st.multiselect(
+            "Documents to ingest", all_corpus_files, default=all_corpus_files,
+            key="ing_selected_files",
+        )
+        ing_cols = st.columns(3)
+        with ing_cols[0]:
+            ing_strategy = st.selectbox(
+                "Strategy", ["fixed_size", "recursive_split", "semantic"],
+                key="ing_strategy",
             )
-            ing_cols = st.columns(5)
-            with ing_cols[0]:
-                ing_chunk_size = st.number_input(
-                    "Chunk size", min_value=32, max_value=512, value=256, step=32,
-                    key="ing_chunk_size",
-                )
-            with ing_cols[1]:
-                ing_overlap = st.number_input(
-                    "Overlap", min_value=0, max_value=128, value=0, step=16,
-                    key="ing_overlap",
-                )
-            with ing_cols[2]:
-                ing_strategy = st.selectbox(
-                    "Strategy", ["fixed_size", "recursive_split", "semantic"],
-                    key="ing_strategy",
-                )
-            with ing_cols[3]:
-                ing_pages = st.number_input(
-                    "Pages", min_value=1, max_value=600, value=INGEST_PAGES, step=5,
-                    key="ing_pages",
-                    help="Number of pages to ingest from the document.",
-                )
-            with ing_cols[4]:
-                ing_start_page = st.number_input(
-                    "Start page", min_value=1, max_value=600, value=INGEST_START_PAGE, step=1,
-                    key="ing_start_page",
-                    help="1-indexed page to start ingesting from.",
-                )
+        with ing_cols[1]:
+            ing_chunk_size = st.number_input(
+                "Chunk size", min_value=32, max_value=512, value=256, step=32,
+                key="ing_chunk_size",
+            )
+        with ing_cols[2]:
+            ing_overlap = st.number_input(
+                "Overlap", min_value=0, max_value=128, value=0, step=16,
+                key="ing_overlap",
+            )
 
-            if st.button("Ingest", type="primary", key="ing_button"):
-                book_path = os.path.join(CORPUS_DIR, ing_doc)
-                with st.status("Ingesting...", expanded=True) as status:
-                    st.write(f"File: {ing_doc}")
-                    st.write(f"Strategy: {ing_strategy}, Size: {ing_chunk_size}, Overlap: {ing_overlap}")
-                    st.write(f"Pages: {ing_pages} (starting at page {ing_start_page})")
-                    try:
-                        from ingest import ingest
-                        collection_name = ingest(
-                            strategy=ing_strategy,
-                            chunk_size=ing_chunk_size,
-                            chunk_overlap=ing_overlap,
-                            version="g1",
-                            pages=ing_pages,
-                            start_page=ing_start_page,
-                            book_path=book_path,
-                        )
-                        st.session_state["pg_selected_collection"] = collection_name
-                        status.update(label=f"Done: {collection_name}", state="complete")
-                        st.rerun()
-                    except Exception as e:
-                        status.update(label="Ingestion failed", state="error")
-                        st.error(str(e))
-        else:
-            st.info("No files in corpus/. Add .txt or .pdf files to the corpus/ directory.")
+        if st.button("Ingest Selected Documents", type="primary", key="ing_button", disabled=not ing_selected):
+            book_paths = [os.path.join(CORPUS_DIR, f) for f in ing_selected]
+            with st.status(f"Ingesting {len(ing_selected)} document(s)...", expanded=True) as status:
+                for f in ing_selected:
+                    st.write(f"- {f}")
+                st.write(f"Strategy: {ing_strategy}, Size: {ing_chunk_size}, Overlap: {ing_overlap}")
+                try:
+                    from ingest import ingest
+                    collection_name = ingest(
+                        strategy=ing_strategy,
+                        chunk_size=ing_chunk_size,
+                        chunk_overlap=ing_overlap,
+                        version="g1",
+                        book_paths=book_paths,
+                    )
+                    st.session_state["pg_selected_collection"] = collection_name
+                    status.update(label=f"Done: {collection_name}", state="complete")
+                    st.rerun()
+                except Exception as e:
+                    status.update(label="Ingestion failed", state="error")
+                    st.error(str(e))
+
+        if len(ing_selected) < len(all_corpus_files):
+            st.caption(
+                "Note: a partial selection with the same strategy/size/overlap as a "
+                "previous ingestion reuses that collection's chunks (collection "
+                "identity doesn't track which specific files were ingested)."
+            )
+    else:
+        st.info("No files in corpus/. Add .txt or .pdf files to the corpus/ directory (subfolders are discovered too).")
 
     st.divider()
 
-    # ── Query Section ─────────────────────────────────────────────────────
-    st.subheader("2. Query")
+
+    # ── Baseline Config Section ────────────────────────────────────────────
+    st.subheader("2. Baseline Config")
+    st.caption(
+        "This is the exact baseline configuration used for this run — "
+        "the reference point the Optimizer will try to beat."
+    )
 
     if selected_collection:
-        # Query-time parameters
-        param_cols = st.columns(2)
-        with param_cols[0]:
-            pg_k = st.number_input(
-                "retrieval_k", min_value=1, max_value=20,
-                value=st.session_state.get("pg_retrieval_k", 5),
-                key="pg_k_input",
-            )
-        with param_cols[1]:
-            pg_max_ctx = st.number_input(
-                "max_context_tokens", min_value=1000, max_value=8000, step=500,
-                value=st.session_state.get("pg_max_context_tokens", 4000),
-                key="pg_ctx_input",
-            )
+        parsed_cfg = parse_collection_name(selected_collection)
+        baseline_overlap = parsed_cfg["chunk_overlap"]
+
+        base_cols = st.columns(2)
+        with base_cols[0]:
+            with st.container(border=True):
+                st.markdown("**Ingestion Config**")
+                st.caption("Baked into the collection — change these means re-ingesting.")
+                ic_cols = st.columns(3)
+                with ic_cols[0]:
+                    st.metric("Chunk Strategy", parsed_cfg["chunk_strategy"])
+                with ic_cols[1]:
+                    st.metric("Chunk Size", parsed_cfg["chunk_size"])
+                with ic_cols[2]:
+                    st.metric("Chunk Overlap", baseline_overlap)
+        with base_cols[1]:
+            with st.container(border=True):
+                st.markdown("**Retrieval Config**")
+                st.caption("Query-time knobs — free to tweak per query, no re-ingestion needed.")
+                rc_cols = st.columns(2)
+                with rc_cols[0]:
+                    pg_k = st.number_input(
+                        "retrieval_k", min_value=1, max_value=20,
+                        value=st.session_state.get("pg_retrieval_k", 5),
+                        key="pg_k_input",
+                    )
+                with rc_cols[1]:
+                    pg_max_ctx = st.number_input(
+                        "max_context_tokens", min_value=1000, max_value=8000, step=500,
+                        value=st.session_state.get("pg_max_context_tokens", 4000),
+                        key="pg_ctx_input",
+                    )
 
         # Store for cross-tab use
         st.session_state["pg_retrieval_k"] = pg_k
         st.session_state["pg_max_context_tokens"] = pg_max_ctx
+    else:
+        st.info("Select or ingest a collection above to see its baseline config.")
 
+    st.divider()
+
+    # ── Query Section ─────────────────────────────────────────────────────
+    st.subheader("3. Query")
+
+    if selected_collection:
         # Query input
         gt_queries = get_ground_truth_queries()
         query_options = ["(type custom query below)"] + gt_queries
@@ -242,17 +536,17 @@ if active_tab == "Test Playground":
         else:
             pg_query = selected_query_option
 
-        # Build full config from collection + query-time params
-        parsed_cfg = parse_collection_name(selected_collection)
+        # Build full config from baseline (corpus) + query-time params
         full_config = {
             "collection_name": selected_collection,
             "chunk_strategy": parsed_cfg["chunk_strategy"],
             "chunk_size": parsed_cfg["chunk_size"],
-            "chunk_overlap": 0,  # not encoded in collection name
+            "chunk_overlap": baseline_overlap,
             "retrieval_k": pg_k,
             "max_context_tokens": pg_max_ctx,
             "prompt_template": "v1",
         }
+
 
         if st.button("Run Query", type="primary", key="pg_run", disabled=not pg_query):
             with st.spinner("Running pipeline..."):
@@ -294,7 +588,7 @@ if active_tab == "Test Playground":
             state = st.session_state["pg_last_result"]
 
             st.divider()
-            st.subheader("3. Results")
+            st.subheader("4. Results")
 
             # Answer
             st.markdown("**Answer:**")
@@ -357,7 +651,8 @@ if active_tab == "Test Playground":
             # Collection clearly shown
             st.caption(f"Executed against: `{state.get('_collection', state.get('collection_name', 'N/A'))}`")
 
-            # Retrieved chunks
+            # Retrieved chunks — collapsible per chunk so each can be
+            # inspected individually without one giant wall of text.
             chunks = state.get("retrieved_chunks", [])
             st.subheader(f"Retrieved Chunks ({len(chunks)})")
             if chunks:
@@ -370,19 +665,25 @@ if active_tab == "Test Playground":
                         sim_score = ch.get("score")
                         sim_str = f"{sim_score:.4f}" if sim_score is not None else "N/A"
 
-                        with st.container(border=True):
-                            st.markdown(
-                                f"**Chunk {i+1}** | Similarity: `{sim_str}` | "
-                                f"ID: `{ch.get('chunk_id', '?')}`"
-                            )
-                            st.caption(
-                                f"Source: `{source_display}` | "
-                                f"Chunk index: {chunk_idx} | "
-                                f"Collection: `{state.get('_collection', state.get('collection_name', ''))}`"
-                            )
+                        label = f"Chunk {i + 1} | Similarity: {sim_str} | Source: {source_display}"
+                        with st.expander(label, expanded=(i == 0)):
+                            meta_cols = st.columns(4)
+                            with meta_cols[0]:
+                                st.caption("Source")
+                                st.markdown(f"`{source_display}`")
+                            with meta_cols[1]:
+                                st.caption("Chunk Index")
+                                st.markdown(f"`{chunk_idx}`")
+                            with meta_cols[2]:
+                                st.caption("Chunk ID")
+                                st.markdown(f"`{ch.get('chunk_id', '?')}`")
+                            with meta_cols[3]:
+                                st.caption("Collection")
+                                st.markdown(f"`{state.get('_collection', state.get('collection_name', ''))}`")
                             st.code(ch.get("text", str(ch)), language=None)
             else:
                 st.caption("No chunks retrieved.")
+
 
             # ── Score Nudge — Suggest Optimization ────────────────────────
             if unified is not None and unified < 0.70:
@@ -396,7 +697,7 @@ if active_tab == "Test Playground":
                     st.session_state["opt_prefill_query"] = pg_query
                     st.session_state["opt_prefill_config"] = copy.deepcopy(full_config)
                     st.session_state["opt_prefill_baseline"] = state
-                    st.session_state["active_tab"] = "Optimizer"
+                    st.session_state["_pending_tab"] = "Optimizer"
                     st.rerun()
 
             # ── HITL Decision (gray band) ─────────────────────────────────
@@ -418,7 +719,7 @@ if active_tab == "Test Playground":
                         st.session_state["opt_prefill_query"] = pg_query
                         st.session_state["opt_prefill_config"] = copy.deepcopy(full_config)
                         st.session_state["opt_prefill_baseline"] = state
-                        st.session_state["active_tab"] = "Optimizer"
+                        st.session_state["_pending_tab"] = "Optimizer"
                         st.rerun()
                 with hitl_cols[2]:
                     if st.button("Reject (discard)", key="pg_hitl_discard"):
@@ -654,6 +955,9 @@ if active_tab == "Optimizer":
         st.markdown("**Iteration Details**")
         for rec in iterations:
             it_num = rec["iteration"]
+            if it_num == 0:
+                # Baseline duplicates what was already shown in the Playground run.
+                continue
             it_score = rec.get("unified_score", 0)
             it_gate = rec.get("gate_decision", "?")
             it_fail = rec.get("failure_type", "-")
@@ -672,47 +976,10 @@ if active_tab == "Optimizer":
             )
 
             with st.expander(label, expanded=(it_num == len(iterations) - 1)):
-                it_cols = st.columns(5)
-                with it_cols[0]:
-                    st.metric("Faithfulness", f"{rec.get('faithfulness') or 0:.2f}")
-                with it_cols[1]:
-                    st.metric("Relevance", f"{rec.get('relevance') or 0:.2f}")
-                with it_cols[2]:
-                    c = rec.get("correctness")
-                    st.metric("Correctness", f"{c:.2f}" if c is not None else "N/A")
-                with it_cols[3]:
-                    st.metric("Retrieval", f"{rec.get('retrieval_score') or 0:.2f}")
-                with it_cols[4]:
-                    st.metric("Unified", f"{it_score:.4f}")
-
-                cfg = rec.get("config", {})
-                st.markdown(
-                    f"**Config:** k={cfg.get('retrieval_k')}, "
-                    f"chunk={cfg.get('chunk_size')}, "
-                    f"overlap={cfg.get('chunk_overlap')}, "
-                    f"prompt={cfg.get('prompt_template')}"
+                _render_iteration_workflow(
+                    rec, iterations, it_num, key_prefix=f"opt_{it_num}",
+                    final_config=report.get("final_config"), query=opt_query,
                 )
-
-                if rec.get("remediation_hint"):
-                    st.markdown(f"**Diagnosis:** {it_fail} — {rec['remediation_hint']}")
-
-                variant = rec.get("applied_variant")
-                if variant:
-                    st.markdown(f"**Fix Applied:** {variant.get('rationale', 'N/A')}")
-                    st.markdown(f"**Delta:** `{variant.get('delta', {})}`")
-
-                ans = rec.get("answer", "")
-                if ans:
-                    st.markdown("**Answer:**")
-                    st.text(ans[:800])
-
-                meta_cols = st.columns(3)
-                with meta_cols[0]:
-                    st.metric("Cost", f"${rec.get('cost_usd') or 0:.4f}")
-                with meta_cols[1]:
-                    st.metric("Latency", f"{rec.get('latency_ms', 0)}ms")
-                with meta_cols[2]:
-                    st.metric("Chunks", rec.get("chunk_count", 0))
 
         st.divider()
 
@@ -725,18 +992,15 @@ if active_tab == "Optimizer":
 
             col_approve, col_reject = st.columns(2)
             with col_approve:
-                if st.button("Approve & Test in Playground", type="primary", key="hitl_approve"):
+                if st.button("Approve & Deploy / Test in Playground", type="primary", key="hitl_approve"):
                     # Push optimized config to Playground
                     final_cfg = report.get("final_config", {})
-                    opt_collection = (
-                        f"rag_g1_{final_cfg.get('chunk_strategy', 'fixed_size')}_"
-                        f"{final_cfg.get('chunk_size', 256)}"
-                    )
+                    opt_collection = build_collection_name(final_cfg, "g1")
                     st.session_state["opt_result_config"] = final_cfg
                     st.session_state["opt_result_collection"] = opt_collection
                     st.session_state["hitl_decision"] = "approved"
                     st.session_state.pop("opt_report", None)
-                    st.session_state["active_tab"] = "Test Playground"
+                    st.session_state["_pending_tab"] = "Test Playground"
                     st.rerun()
             with col_reject:
                 if st.button("Reject — Continue improving", key="hitl_reject"):
@@ -807,16 +1071,13 @@ if active_tab == "Optimizer":
         if st.button("Test optimized config in Playground", key="opt_to_playground"):
             final_cfg = report.get("final_config", {})
             # Determine the optimized collection name
-            opt_collection = (
-                f"rag_g1_{final_cfg.get('chunk_strategy', 'fixed_size')}_"
-                f"{final_cfg.get('chunk_size', 256)}"
-            )
+            opt_collection = build_collection_name(final_cfg, "g1")
             st.session_state["opt_result_config"] = final_cfg
             st.session_state["opt_result_collection"] = opt_collection
             # Clear optimizer state for clean transition
             st.session_state.pop("opt_report", None)
             st.session_state.pop("hitl_decision", None)
-            st.session_state["active_tab"] = "Test Playground"
+            st.session_state["_pending_tab"] = "Test Playground"
             st.rerun()
 
 
@@ -841,13 +1102,6 @@ if active_tab == "History":
             count = clear_history()
             st.success(f"Cleared {count} records.")
             st.rerun()
-
-    def _fmt(val, fmt=".2f", prefix="", suffix=""):
-        if val is None:
-            return "-"
-        if isinstance(val, (int, float)) and val == 0:
-            return "-"
-        return f"{prefix}{val:{fmt}}{suffix}"
 
     history = load_history(limit=100)
 
@@ -915,9 +1169,10 @@ if active_tab == "History":
                     )
 
                     preview = record.get("answer_preview", "")
-                    if preview:
-                        st.markdown("**Answer:**")
-                        st.text(preview)
+                    _render_answer_block(preview)
+
+                    _render_judge_details(record.get("judge_details", {}), key_prefix=f"hist_q_{ts}")
+                    _render_execution_trace(record.get("execution_trace", []), key_prefix=f"hist_q_{ts}")
 
             elif run_type == "optimization":
                 f_score = record.get("final_score")
@@ -929,7 +1184,10 @@ if active_tab == "History":
                     f"{imp:.4f}" if imp is not None else "-"
                 )
 
-                with st.expander(f"[{ts}] Optimization | final={score_str} | {imp_str} | stop={stop_r} | \"{q}\""):
+                # Not an expander — real per-iteration expanders below can't
+                # nest inside one, and this mirrors the Optimizer tab's layout.
+                with st.container(border=True):
+                    st.markdown(f"**[{ts}] Optimization | final={score_str} | {imp_str} | stop={stop_r} | \"{q}\"**")
                     st.markdown(f"**Query:** {record.get('query', '')}")
                     o_cols = st.columns(4)
                     with o_cols[0]:
@@ -950,42 +1208,35 @@ if active_tab == "History":
                         f"chunk={init_cfg.get('chunk_size')} -> {final_cfg.get('chunk_size')}"
                     )
 
-                    # Show each iteration
-                    iters = record.get("iterations", [])
-                    if iters:
-                        st.markdown("---")
-                        st.markdown("**Iterations:**")
-                        for it in iters:
-                            it_num = it.get("iteration", "?")
-                            it_score = it.get("unified_score")
-                            it_gate = it.get("gate_decision", "?")
-                            it_score_str = f"{it_score:.3f}" if it_score is not None else "-"
+                    # Each iteration gets its own real expander — same UX as
+                    # the Optimizer tab's "Iteration Details" section.
+                    all_iters = record.get("iterations", [])
+                    st.markdown("**Iteration Details**")
+                    for it in all_iters:
+                        it_num = it.get("iteration", 0)
+                        if it_num == 0:
+                            # Baseline duplicates the Playground run that seeded this optimization.
+                            continue
+                        it_score = it.get("unified_score", 0)
+                        it_gate = it.get("gate_decision", "?")
+                        it_fail = it.get("failure_type", "-")
 
-                            st.markdown(f"**Iteration {it_num}** | score={it_score_str} | gate={it_gate}")
+                        prev_score = (
+                            all_iters[it_num - 1]["unified_score"]
+                            if 0 < it_num < len(all_iters) else None
+                        )
+                        delta_str = ""
+                        if prev_score is not None and it_score is not None:
+                            delta = it_score - prev_score
+                            delta_str = f" (delta: {'+' if delta >= 0 else ''}{delta:.4f})"
 
-                            it_cols = st.columns(6)
-                            with it_cols[0]:
-                                st.metric("Unified", it_score_str, label_visibility="visible")
-                            with it_cols[1]:
-                                st.metric("Faith.", _fmt(it.get("faithfulness")))
-                            with it_cols[2]:
-                                st.metric("Relev.", _fmt(it.get("relevance")))
-                            with it_cols[3]:
-                                st.metric("Correct.", _fmt(it.get("correctness")))
-                            with it_cols[4]:
-                                st.metric("Retrieval", _fmt(it.get("retrieval_score")))
-                            with it_cols[5]:
-                                st.metric("Chunks", it.get("chunk_count", "-"))
+                        label = f"Iteration {it_num}: score={it_score:.4f} | gate={it_gate} | failure={it_fail}{delta_str}"
 
-                            # Show what the diagnoser found and what change was applied
-                            if it.get("failure_type"):
-                                st.caption(f"Diagnosis: {it['failure_type']} | Hint: {it.get('remediation_hint', '-')}")
-                            variant = it.get("applied_variant")
-                            if variant:
-                                st.caption(
-                                    f"Applied: {variant.get('variant_id', '?')} | "
-                                    f"Delta: {variant.get('delta', {})} | "
-                                    f"Rationale: {variant.get('rationale', '-')}"
-                                )
-                            if it.get("answer_preview"):
-                                st.text(it["answer_preview"])
+                        with st.expander(label, expanded=(it_num == len(all_iters) - 1)):
+                            _render_iteration_workflow(
+                                it, all_iters, it_num,
+                                key_prefix=f"hist_{record.get('timestamp', '')}_{it_num}",
+                                final_config=record.get("final_config"),
+                                query=record.get("query", ""),
+                            )
+
