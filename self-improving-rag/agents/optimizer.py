@@ -43,6 +43,7 @@ from config import (
     validate_config,
 )
 from agents.graph import build_graph
+from agents.mlflow_logger import log_optimization_run as _mlflow_log_opt
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -334,6 +335,9 @@ def run_optimization(
     print(f"  Final score:     {final_score}")
     print(f"  Improvement:     {improvement}")
     print(f"{'=' * 70}\n")
+
+    # Log to MLflow (best-effort — JSONL still works if MLflow is down)
+    _mlflow_log_opt(query, report)
 
     return report
 

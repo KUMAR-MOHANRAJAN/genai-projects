@@ -5,14 +5,19 @@ No database needed — just a flat file. Each record has:
   - timestamp, run_type ("query" or "optimization"), query, config,
     scores, gate_decision, stop_reason (if optimization), etc.
 
+Also logs to MLflow (if available) for experiment tracking UI.
+
 Used by:
   - Frontend Tab 3 (History) to display past runs in a table
+  - MLflow UI for side-by-side run comparison and metric charts
   - Future: drift detection (compare recent scores to historical average)
 """
 
 import json
 import os
 from datetime import datetime, timezone
+
+from agents.mlflow_logger import log_query_run as _mlflow_log_query, log_optimization_run as _mlflow_log_opt
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 HISTORY_FILE = os.path.join(_DATA_DIR, "runs_history.jsonl")
@@ -98,6 +103,7 @@ def save_query_run(query: str, config: dict, result: dict, version: str = "v1") 
         "judge_details": result.get("judge_details", {}),
     }
     _append(record)
+    _mlflow_log_query(query, result, config, version)
     return record
 
 
@@ -125,6 +131,7 @@ def save_optimization_run(query: str, report: dict) -> dict:
         "iterations": _slim_iterations(report.get("iterations", [])),
     }
     _append(record)
+    _mlflow_log_opt(query, report)
     return record
 
 
