@@ -1,6 +1,11 @@
 """Diagnoser Agent — LangGraph node for failure classification.
 
-Pure rule cascade — no LLM call. Deterministic, free, transparent, testable.
+Mostly a rule cascade — deterministic, free, transparent, testable — with
+one narrow, cost-bounded exception: when an answer abstains and there's no
+keyword-based retrieval_score (ad-hoc query outside the golden set), it asks
+an LLM judge whether the retrieved chunks are actually relevant, instead of
+guessing from raw embedding distance. This never fires on golden-set queries
+(those always have a free keyword-based retrieval_score already).
 
 Classifies the root cause of a pipeline failure into exactly one of 5 types.
 Rules are checked in fixed priority order (first match wins). Priority is
@@ -27,6 +32,8 @@ if _project_root not in sys.path:
 
 from state import RunState
 from config import FAITHFULNESS_FLOOR, RETRIEVAL_SIM_FLOOR, LATENCY_CAP_MS
+from agents.trace import traced_node
+from pipeline import _judge_retrieval_relevance
 
 
 _ABSTENTION_PATTERNS = (
@@ -45,6 +52,16 @@ def _is_abstention(answer: str) -> bool:
         re.search(pattern, answer, flags=re.IGNORECASE)
         for pattern in _ABSTENTION_PATTERNS
     )
+
+
+def _avg_chunk_similarity(chunks: list[dict]) -> float | None:
+    """Fallback relevance signal when retrieval_score is None (ad-hoc query
+    with no golden-set keywords, e.g. a question outside the corpus).
+    Averages each chunk's own reported similarity score."""
+    scores = [c.get("score") for c in chunks if isinstance(c.get("score"), (int, float))]
+    if not scores:
+        return None
+    return sum(scores) / len(scores)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -135,6 +152,37 @@ def _classify_failure(state: RunState) -> tuple[str, float, str]:
                 "Answer explicitly abstained and no chunks were retrieved. "
                 "The model received no evidence to answer from.",
             )
+        # Retrieved chunks exist, but were they actually relevant? Vector
+        # search always returns top-k neighbors regardless of true
+        # relevance, so a non-empty chunk list alone doesn't mean retrieval
+        # succeeded. Prefer the keyword-based retrieval_score (golden-set
+        # queries, free); for ad-hoc queries with no ground truth, ask an
+        # LLM judge instead of guessing from raw embedding distance; if the
+        # judge itself fails, fall back to average chunk similarity.
+        if retrieval_score is not None:
+            is_relevant = retrieval_score >= RETRIEVAL_SIM_FLOOR
+            evidence = f"retrieval_score {retrieval_score:.2f} < {RETRIEVAL_SIM_FLOOR} floor"
+        else:
+            relevant, rel_score, reasoning = _judge_retrieval_relevance(state.get("query", ""), chunks)
+            if relevant is not None:
+                is_relevant = relevant
+                evidence = f"LLM retrieval judge ({rel_score if rel_score is not None else 'n/a'}): {reasoning or ('relevant' if relevant else 'not relevant')}"
+            else:
+                avg_sim = _avg_chunk_similarity(chunks)
+                is_relevant = avg_sim is None or avg_sim >= RETRIEVAL_SIM_FLOOR
+                evidence = (
+                    f"avg chunk similarity {avg_sim:.2f} < {RETRIEVAL_SIM_FLOOR} floor"
+                    if avg_sim is not None else "no similarity data available"
+                )
+
+        if not is_relevant:
+            return (
+                "F-01",
+                0.90,
+                f"Answer explicitly abstained and the {len(chunks)} retrieved chunks "
+                f"are not relevant ({evidence}). This is a retrieval miss, not an "
+                f"incomplete answer — the corpus likely doesn't cover this topic.",
+            )
         return (
             "F-04",
             0.78,
@@ -157,8 +205,11 @@ def _classify_failure(state: RunState) -> tuple[str, float, str]:
 
     # ── Priority 3: Retrieval Miss (F-01) ────────────────────────────────
     # Didn't find relevant content. If retrieval fails, everything downstream
-    # is compromised — no point analyzing answer quality.
-    if not chunks or retrieval_score < RETRIEVAL_SIM_FLOOR:
+    # is compromised — no point analyzing answer quality. Skipped when
+    # retrieval_score is None (ad-hoc query, no ground truth keywords) since
+    # there's nothing reliable to compare against RETRIEVAL_SIM_FLOOR here —
+    # the abstention branch above already covers that case via chunk similarity.
+    if retrieval_score is not None and (not chunks or retrieval_score < RETRIEVAL_SIM_FLOOR):
         return (
             "F-01",
             0.90,
@@ -203,6 +254,7 @@ def _classify_failure(state: RunState) -> tuple[str, float, str]:
 # LangGraph Node
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+@traced_node("diagnoser")
 def diagnoser_node(state: RunState) -> dict:
     """LangGraph node: classify pipeline failure into one of 5 types.
 

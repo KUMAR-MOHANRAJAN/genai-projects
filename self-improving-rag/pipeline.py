@@ -116,10 +116,11 @@ def _llm_judge(prompt: str) -> dict:
     return _judge_call_via_utils(prompt, agent_name="judge")
 
 
-def _judge_faithfulness(answer: str, context: str) -> tuple[float | None, str | None]:
+def _judge_faithfulness(answer: str, context: str) -> tuple[float | None, str | None, dict]:
     """LLM-judge: break answer into claims, verify each against context.
 
-    Returns (score, reasoning) tuple. Score is None if judge fails (never fabricates).
+    Returns (score, reasoning, detail) tuple. Score is None if judge fails
+    (never fabricates). detail carries the raw claims/supported breakdown.
     """
     prompt = _FAITHFULNESS_PROMPT.format(context=context, answer=answer)
     result = _llm_judge(prompt)
@@ -130,36 +131,77 @@ def _judge_faithfulness(answer: str, context: str) -> tuple[float | None, str | 
     reasoning = None
     if claims and supported:
         reasoning = f"{sum(supported)}/{len(claims)} claims supported"
+    detail = {"claims": claims, "supported": supported}
     if score is not None:
-        return float(score), reasoning
-    return None, None  # judge failure — caller must handle missing metric
+        return float(score), reasoning, detail
+    return None, None, detail  # judge failure — caller must handle missing metric
 
 
-def _judge_relevance(answer: str, query: str) -> tuple[float | None, str | None]:
+def _judge_relevance(answer: str, query: str) -> tuple[float | None, str | None, dict]:
     """LLM-judge: does the answer address the question?
 
-    Returns (score, reasoning) tuple. Score is None if judge fails (never fabricates).
+    Returns (score, reasoning, detail) tuple. Score is None if judge fails (never fabricates).
     """
     prompt = _RELEVANCE_PROMPT.format(question=query, answer=answer)
     result = _llm_judge(prompt)
     score = result.get("score")
     reasoning = result.get("reasoning")
+    detail = {"reasoning": reasoning}
     if score is not None:
-        return float(score), reasoning
-    return None, None
+        return float(score), reasoning, detail
+    return None, None, detail
 
 
-def _judge_correctness(answer: str, query: str, expected_answer: str) -> tuple[float | None, str | None]:
-    """LLM-judge: compare answer to ground truth. Returns (score, reasoning) tuple."""
+def _judge_correctness(answer: str, query: str, expected_answer: str) -> tuple[float | None, str | None, dict]:
+    """LLM-judge: compare answer to ground truth. Returns (score, reasoning, detail) tuple."""
     prompt = _CORRECTNESS_PROMPT.format(
         question=query, expected_answer=expected_answer, answer=answer
     )
     result = _llm_judge(prompt)
     score = result.get("score")
     reasoning = result.get("reasoning")
+    detail = {"reasoning": reasoning, "expected_answer": expected_answer}
     if score is not None:
-        return float(score), reasoning
-    return None, None
+        return float(score), reasoning, detail
+    return None, None, detail
+
+
+_RETRIEVAL_RELEVANCE_PROMPT = """You are an evaluation judge. Determine whether ANY of the RETRIEVED CHUNKS below contain information relevant to answering the QUESTION.
+
+Respond ONLY with valid JSON:
+{{"relevant": true, "relevance_score": 0.8, "reasoning": "one brief sentence"}}
+
+QUESTION:
+{question}
+
+RETRIEVED CHUNKS:
+{chunks_text}
+"""
+
+
+def _judge_retrieval_relevance(query: str, chunks: list[dict]) -> tuple[bool | None, float | None, str | None]:
+    """LLM-judge: is any retrieved chunk actually relevant to the query?
+
+    NOT part of the standard evaluation — this is a targeted fallback used
+    only by the diagnoser when keyword-based retrieval_score is unavailable
+    (ad-hoc query with no golden-set ground truth) and the answer is an
+    abstention. Scoped narrowly so it never adds cost to the golden-set/
+    optimizer path, which already has free keyword-based retrieval scoring.
+
+    Returns (relevant, relevance_score, reasoning). All None if the judge
+    fails (never fabricates a verdict).
+    """
+    chunks_text = "\n\n".join(
+        f"[Chunk {i + 1}] {c.get('text', '')[:500]}" for i, c in enumerate(chunks)
+    )
+    prompt = _RETRIEVAL_RELEVANCE_PROMPT.format(question=query, chunks_text=chunks_text)
+    result = _llm_judge(prompt)
+    relevant = result.get("relevant")
+    score = result.get("relevance_score")
+    reasoning = result.get("reasoning")
+    if relevant is not None:
+        return bool(relevant), (float(score) if score is not None else None), reasoning
+    return None, None, None
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -405,17 +447,20 @@ def run_pipeline(
     # all metrics to distinguish F-01 (bad retrieval) from F-03 (hallucination).
     answer = gen_result["answer"]
     judge_reasoning = {}
+    judge_details = {}
 
     print(f"  [5/8] Judge: faithfulness...")
-    faithfulness, faith_reasoning = _judge_faithfulness(answer, context)
+    faithfulness, faith_reasoning, faith_detail = _judge_faithfulness(answer, context)
     if faith_reasoning:
         judge_reasoning["faithfulness"] = faith_reasoning
+    judge_details["faithfulness"] = faith_detail
     print(f"         faithfulness={faithfulness}")
 
     print(f"  [6/8] Judge: relevance...")
-    relevance, rel_reasoning = _judge_relevance(answer, query)
+    relevance, rel_reasoning, rel_detail = _judge_relevance(answer, query)
     if rel_reasoning:
         judge_reasoning["relevance"] = rel_reasoning
+    judge_details["relevance"] = rel_detail
     print(f"         relevance={relevance}")
 
     expected_answer = None
@@ -426,9 +471,10 @@ def run_pipeline(
     correctness = None
     if expected_answer:
         print(f"  [7/8] Judge: correctness (ground truth found)...")
-        correctness, corr_reasoning = _judge_correctness(answer, query, expected_answer)
+        correctness, corr_reasoning, corr_detail = _judge_correctness(answer, query, expected_answer)
         if corr_reasoning:
             judge_reasoning["correctness"] = corr_reasoning
+        judge_details["correctness"] = corr_detail
         print(f"         correctness={correctness}")
     else:
         print(f"  [7/8] Judge: correctness — skipped (no ground truth)")
@@ -465,6 +511,7 @@ def run_pipeline(
     state["gate_decision"] = gate_decision
     state["gate_reason"] = gate_reason
     state["judge_reasoning"] = judge_reasoning
+    state["judge_details"] = judge_details
 
     print(f"\n  [8/8] Gate decision: {gate_decision}")
     print(f"         {gate_reason}")

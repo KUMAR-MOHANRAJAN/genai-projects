@@ -35,6 +35,7 @@ from state import RunState
 from config import UNIFIED_TARGET, HITL_LOW, FAITHFULNESS_FLOOR
 from ground_truth import TEST_QUERIES
 from utils import compute_gate_decision
+from agents.trace import traced_node
 from pipeline import (
     _judge_faithfulness,
     _judge_relevance,
@@ -48,6 +49,7 @@ from pipeline import (
 )
 
 
+@traced_node("evaluator")
 def evaluator_node(state: RunState) -> dict:
     """LangGraph node: evaluate a completed pipeline run.
 
@@ -79,14 +81,17 @@ def evaluator_node(state: RunState) -> dict:
 
     # ── 2. LLM Judges (3 separate calls) ─────────────────────────────────
     judge_reasoning = {}
+    judge_details = {}
 
-    faithfulness, faith_reasoning = _judge_faithfulness(answer, context)
+    faithfulness, faith_reasoning, faith_detail = _judge_faithfulness(answer, context)
     if faith_reasoning:
         judge_reasoning["faithfulness"] = faith_reasoning
+    judge_details["faithfulness"] = faith_detail
 
-    relevance, rel_reasoning = _judge_relevance(answer, query)
+    relevance, rel_reasoning, rel_detail = _judge_relevance(answer, query)
     if rel_reasoning:
         judge_reasoning["relevance"] = rel_reasoning
+    judge_details["relevance"] = rel_detail
 
     # Correctness requires ground truth — only available for test queries
     expected_answer = None
@@ -97,9 +102,10 @@ def evaluator_node(state: RunState) -> dict:
 
     correctness = None
     if expected_answer:
-        correctness, corr_reasoning = _judge_correctness(answer, query, expected_answer)
+        correctness, corr_reasoning, corr_detail = _judge_correctness(answer, query, expected_answer)
         if corr_reasoning:
             judge_reasoning["correctness"] = corr_reasoning
+        judge_details["correctness"] = corr_detail
 
     # ── 3. Sub-scores and Unified Score ──────────────────────────────────
     quality = _compute_quality_score(relevance, correctness)
@@ -132,6 +138,7 @@ def evaluator_node(state: RunState) -> dict:
         "gate_decision": gate_decision,
         "gate_reason": gate_reason,
         "judge_reasoning": judge_reasoning,
+        "judge_details": judge_details,
         "cost_usd": cost_usd,
         "latency_ms": latency_ms,
     }
