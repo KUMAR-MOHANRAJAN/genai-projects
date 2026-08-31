@@ -1,6 +1,6 @@
 MUTUAL NON-DISCLOSURE AGREEMENT
-AutoRAG Solutions Pte Ltd ("Party A") and [Counterparty Name] ("Party B")
-Template Version 2.0 | Legal Team
+NorthStar Canada Inc. ("Party A") and [Counterparty Name] ("Party B")
+Template Version 1.0 | Legal Team
 
 This Mutual Non-Disclosure Agreement is entered into as of the date of last signature below.
 
@@ -48,7 +48,7 @@ Each party acknowledges that unauthorized disclosure of Confidential Information
 
 8. GOVERNING LAW
 
-This Agreement is governed by the laws of Singapore. Any dispute arising from this Agreement shall be subject to the exclusive jurisdiction of the courts of Singapore.
+This Agreement is governed by the laws of Ontario and the federal laws of Canada applicable in Ontario. Any dispute arising from this Agreement is subject to the exclusive jurisdiction of the courts of Ontario.
 
 9. ENTIRE AGREEMENT
 

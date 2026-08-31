@@ -59,6 +59,7 @@ CORPUS_FILES = [
     os.path.join(CORPUS_DIR, "hr", "leave_policy.txt"),
     os.path.join(CORPUS_DIR, "hr", "benefits_guide.txt"),
     os.path.join(CORPUS_DIR, "hr", "code_of_conduct.txt"),
+    os.path.join(CORPUS_DIR, "hr", "statutory_holidays_policy.txt"),
     os.path.join(CORPUS_DIR, "technical", "production_runbook.txt"),
     os.path.join(CORPUS_DIR, "technical", "developer_setup_guide.txt"),
     os.path.join(CORPUS_DIR, "legal", "vendor_contract_template.txt"),

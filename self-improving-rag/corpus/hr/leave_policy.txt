@@ -1,26 +1,25 @@
-LEAVE POLICY — AUTORAG SOLUTIONS PTE LTD
-Version 2.1 | Effective Date: 01 January 2026 | Owner: People Operations
+LEAVE POLICY - NORTHSTAR CANADA
+Version 1.0 | Effective Date: 01 September 2026 | Owner: People Operations
 
 1. SCOPE AND PURPOSE
 
-This policy applies to all full-time permanent employees of AutoRAG Solutions. It defines entitlements, eligibility conditions, application procedures, and rules governing all leave types. This policy supersedes all previous leave policies.
+NorthStar Canada is a federally regulated employer. This policy sets company entitlements for Canadian employees; where the Canada Labour Code provides a greater minimum protection, the Code applies.
 
 2. ANNUAL LEAVE
 
 2.1 Entitlement
-Employees are entitled to paid annual leave based on years of continuous service:
-  - Less than 3 years: 18 working days per year
-  - 3 years to less than 7 years: 21 working days per year
-  - 7 years and above: 25 working days per year
+Employees are entitled to paid vacation based on years of continuous service:
+  - Less than 5 years: 15 working days per year
+  - 5 years or more: 20 working days per year
 
 2.2 Accrual
-Annual leave accrues at a rate of 1.5 days per completed month of service for employees entitled to 18 days, and proportionally higher for higher entitlements. Leave begins accruing from the first day of employment.
+Vacation accrues monthly from the first day of employment.
 
 2.3 Carryover
-Up to 5 unused annual leave days may be carried over to the following calendar year. Carried-over leave must be consumed by 31 March of the following year. Leave that is not consumed by this date is forfeited without compensation.
+Up to 5 unused vacation days may be carried over to the following calendar year. Carried-over days must be used by 31 March.
 
 2.4 Encashment
-Annual leave may be encashed only upon separation from the company. The encashment value is calculated using the employee's basic daily salary at the time of separation.
+Unused earned vacation is paid out on separation from the company.
 
 2.5 Application
 Annual leave must be applied for at least 3 business days in advance through the HR portal for durations of 3 days or fewer. Leave of 4 or more consecutive days requires a minimum of 10 business days advance notice. Emergency annual leave applications may be approved at the manager's discretion.
@@ -28,32 +27,28 @@ Annual leave must be applied for at least 3 business days in advance through the
 3. SICK LEAVE
 
 3.1 Entitlement
-All full-time employees receive 12 days of paid sick leave per year. Sick leave does not accumulate or carry over between calendar years.
+Employees receive up to 10 paid medical-leave days per calendar year. After 30 days of continuous employment, employees earn 3 days, then 1 additional day per completed month, to a maximum of 10 days.
 
 3.2 Medical Certificate
-A medical certificate from a registered medical practitioner is required for absences of 2 or more consecutive days. The certificate must be submitted to People Operations within 3 business days of returning to work.
+For an absence of 3 or more consecutive scheduled days, People Operations may request reasonable supporting documentation.
 
 3.3 Extended Illness
-Employees who exhaust their sick leave entitlement may apply to use annual leave for continued absence due to illness. If all leave entitlements are exhausted, the employee may apply for unpaid medical leave for up to 30 additional days, subject to management approval.
+Employees remain eligible for job-protected medical leave under the Canada Labour Code beyond the paid entitlement.
 
 4. MATERNITY AND PATERNITY LEAVE
 
 4.1 Maternity Leave
-The primary caregiver is entitled to 26 weeks of paid maternity leave. This may commence up to 4 weeks before the expected delivery date. The leave is paid at 100% of basic salary. Employees must provide at least 6 weeks written notice and a medical certificate confirming the expected delivery date.
+Eligible employees may take up to 17 weeks of unpaid maternity leave under the Canada Labour Code. NorthStar provides a supplementary benefit of up to 8 weeks at 75% of regular base pay for employees eligible for Employment Insurance maternity benefits.
 
 4.2 Paternity Leave
-The secondary caregiver is entitled to 4 weeks of paid paternity leave to be taken within 16 weeks of the child's birth or adoption. This leave must be taken in a single continuous block unless otherwise agreed with the manager and People Operations.
+Eligible natural or adoptive parents may take up to 63 weeks of unpaid parental leave. NorthStar provides 2 weeks of paid partner leave to the non-birthing parent.
 
 4.3 Adoption Leave
-Employees adopting a child under 12 months of age are entitled to the same leave as biological parents. The leave commences on the date of legal custody transfer.
+Employees should provide at least 4 weeks' written notice where practicable. Employment and seniority continue during statutory leave.
 
 5. BEREAVEMENT LEAVE
 
-Employees are entitled to paid bereavement leave upon the death of a family member:
-  - Spouse, child, parent, or sibling: 5 working days
-  - Grandparent, parent-in-law, or sibling-in-law: 2 working days
-
-Additional unpaid leave may be granted at the manager's discretion for travel requirements. Evidence of bereavement may be requested.
+Employees receive 5 paid days for the death of an immediate family member. The federal minimum provides up to 10 days of bereavement leave, with the first 3 days paid after 3 consecutive months of employment.
 
 6. UNPAID LEAVE
 
@@ -61,7 +56,7 @@ Unpaid leave may be granted for personal circumstances not covered by other leav
 
 7. PUBLIC HOLIDAYS
 
-Employees are entitled to all public holidays gazetted by the relevant government authority for their work location. If an employee is required to work on a public holiday, they will receive a substitute day off or additional compensation as required by local law.
+Employees are eligible for federal general holidays under the Statutory Holidays Policy. Employees required to work receive holiday pay and a substitute day off, subject to applicable rules.
 
 8. LEAVE WITHOUT PAY (LWOP)
 

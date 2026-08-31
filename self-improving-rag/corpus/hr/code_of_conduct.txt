@@ -1,9 +1,9 @@
-CODE OF CONDUCT — AUTORAG SOLUTIONS PTE LTD
-Version 1.4 | Effective Date: 01 March 2026 | Owner: Legal & Compliance
+CODE OF CONDUCT - NORTHSTAR CANADA
+Version 1.0 | Effective Date: 01 September 2026 | Owner: Legal & Compliance
 
 PREAMBLE
 
-AutoRAG Solutions is committed to maintaining the highest standards of professional integrity, ethical behavior, and mutual respect. This Code of Conduct establishes the behavioral expectations for all employees, contractors, consultants, and partners acting on behalf of the company.
+NorthStar Canada expects professional integrity, respect, and careful handling of customer and employee information from all employees, contractors, and partners.
 
 1. PROFESSIONAL INTEGRITY
 
@@ -15,7 +15,7 @@ Employees must disclose any actual or potential conflict of interest to their ma
 
 All employees have access to confidential information about the company, its products, clients, and partners. This information must not be shared outside the company without explicit authorization from the Legal team. Confidentiality obligations continue for 2 years after termination of employment.
 
-Customer data must be handled in accordance with applicable data protection laws including PDPA (Singapore), GDPR (EU), and DPDP (India). Employees who handle personal data must complete the annual data protection training. Any suspected data breach must be reported to the Data Protection Officer within 2 hours of discovery.
+Customer data must be handled in accordance with applicable Canadian privacy requirements, including PIPEDA where applicable. Employees who handle personal data must complete annual privacy training. Any suspected data breach must be reported to the Privacy Officer and Security team within 2 hours of discovery.
 
 3. RESPECT IN THE WORKPLACE
 
@@ -39,13 +39,13 @@ Requests for media comment or analyst briefings must be routed through the Commu
 
 The company has a zero-tolerance policy for bribery and corruption in all its forms. Employees must not offer, give, receive, or solicit anything of value to improperly influence a business decision. This applies to interactions with government officials, private sector partners, and any third party.
 
-Gifts and hospitality may only be accepted or offered within the following limits: gifts up to SGD 50 in value, hospitality up to SGD 150 per occasion. Any gift or hospitality above these limits requires prior approval from Legal. All received gifts above SGD 20 must be logged in the Gifts Register.
+Gifts up to CAD 75 and hospitality up to CAD 150 per occasion may be accepted or offered. Anything above these limits requires prior Legal approval. Gifts above CAD 25 must be logged in the Gifts Register.
 
 7. REPORTING VIOLATIONS
 
 Employees who suspect a violation of this Code of Conduct should report it through one of the following channels:
   - Direct report to the People Operations team
-  - Anonymous whistleblower hotline: 1800-CONDUCT (available 24/7)
-  - Email to ethics@autorag-solutions.com
+  - Anonymous whistleblower hotline: 1-800-555-ETHICS (available 24/7)
+  - Email to ethics@northstar-canada.example
 
 Reports will be investigated promptly and confidentially. The company prohibits retaliation against anyone who makes a good-faith report. Knowingly making false reports may itself result in disciplinary action.
