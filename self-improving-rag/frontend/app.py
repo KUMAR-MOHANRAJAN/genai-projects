@@ -757,6 +757,10 @@ if active_tab == "Test Playground":
         # ── Results Display ───────────────────────────────────────────────
         if "pg_last_result" in st.session_state:
             state = st.session_state["pg_last_result"]
+            handoff_query = st.session_state.get("pg_last_query", "")
+            handoff_config = copy.deepcopy(st.session_state.get("pg_last_config", full_config))
+            handoff_collection = state.get("_collection", handoff_config.get("collection_name", ""))
+            handoff_version = parse_collection_name(handoff_collection).get("version", "g1")
 
             st.divider()
             st.subheader("4. Results")
@@ -862,9 +866,21 @@ if active_tab == "Test Playground":
                     "The optimizer can automatically improve retrieval configuration."
                 )
                 if st.button("Optimize this collection", type="primary", key="pg_to_opt"):
-                    st.session_state["opt_prefill_query"] = pg_query
-                    st.session_state["opt_prefill_config"] = copy.deepcopy(full_config)
+                    # Preserve the query and config that produced this result.
+                    st.session_state["opt_prefill_query"] = handoff_query
+                    st.session_state["opt_prefill_config"] = handoff_config
                     st.session_state["opt_prefill_baseline"] = state
+                    st.session_state["opt_prefill_version"] = handoff_version
+                    st.session_state["opt_config"] = copy.deepcopy(handoff_config)
+                    st.session_state["opt_k"] = handoff_config["retrieval_k"]
+                    st.session_state["opt_chunk"] = handoff_config["chunk_size"]
+                    st.session_state["opt_overlap"] = handoff_config["chunk_overlap"]
+                    st.session_state["opt_ctx"] = handoff_config["max_context_tokens"]
+                    st.session_state["opt_query_select"] = (
+                        handoff_query if handoff_query in get_ground_truth_queries() else "Custom query"
+                    )
+                    st.session_state["opt_custom_query"] = handoff_query
+                    st.session_state.pop("opt_report", None)
                     st.session_state["_pending_tab"] = "Optimizer"
                     st.rerun()
 
@@ -884,9 +900,20 @@ if active_tab == "Test Playground":
                         st.rerun()
                 with hitl_cols[1]:
                     if st.button("Reject & Optimize", key="pg_hitl_reject"):
-                        st.session_state["opt_prefill_query"] = pg_query
-                        st.session_state["opt_prefill_config"] = copy.deepcopy(full_config)
+                        st.session_state["opt_prefill_query"] = handoff_query
+                        st.session_state["opt_prefill_config"] = handoff_config
                         st.session_state["opt_prefill_baseline"] = state
+                        st.session_state["opt_prefill_version"] = handoff_version
+                        st.session_state["opt_config"] = copy.deepcopy(handoff_config)
+                        st.session_state["opt_k"] = handoff_config["retrieval_k"]
+                        st.session_state["opt_chunk"] = handoff_config["chunk_size"]
+                        st.session_state["opt_overlap"] = handoff_config["chunk_overlap"]
+                        st.session_state["opt_ctx"] = handoff_config["max_context_tokens"]
+                        st.session_state["opt_query_select"] = (
+                            handoff_query if handoff_query in get_ground_truth_queries() else "Custom query"
+                        )
+                        st.session_state["opt_custom_query"] = handoff_query
+                        st.session_state.pop("opt_report", None)
                         st.session_state["_pending_tab"] = "Optimizer"
                         st.rerun()
                 with hitl_cols[2]:
@@ -955,6 +982,7 @@ if active_tab == "Optimizer":
         opt_query_default = st.session_state.get("opt_prefill_query", "")
         opt_config_default = st.session_state.get("opt_prefill_config", copy.deepcopy(BAD_CONFIG))
         opt_baseline_result = st.session_state.get("opt_prefill_baseline")
+        opt_version = st.session_state.get("opt_prefill_version", "g1")
         st.success(
             f"Pre-filled from Playground: \"{opt_query_default[:60]}\" | "
             f"Baseline score: {opt_baseline_result.get('unified_score', 'N/A') if opt_baseline_result else 'N/A'}"
@@ -963,15 +991,26 @@ if active_tab == "Optimizer":
         opt_query_default = ""
         opt_config_default = copy.deepcopy(BAD_CONFIG)
         opt_baseline_result = None
+        opt_version = "g1"
 
     gt_queries_opt = get_ground_truth_queries()
+    custom_query_option = "Custom query"
+    query_options = [custom_query_option, *gt_queries_opt]
     if prefilled and opt_query_default in gt_queries_opt:
-        default_q_idx = gt_queries_opt.index(opt_query_default)
+        default_q_idx = query_options.index(opt_query_default)
     else:
         default_q_idx = 0
-    opt_query = st.selectbox(
-        "Query", gt_queries_opt, index=default_q_idx, key="opt_query_select",
+    selected_query = st.selectbox(
+        "Query", query_options, index=default_q_idx, key="opt_query_select",
     )
+    if selected_query == custom_query_option:
+        opt_query = st.text_area(
+            "Custom query",
+            value=opt_query_default if prefilled else "",
+            key="opt_custom_query",
+        )
+    else:
+        opt_query = selected_query
 
     if prefilled and opt_query != opt_query_default:
         opt_baseline_result = None
@@ -1057,24 +1096,29 @@ if active_tab == "Optimizer":
     st.subheader("2. Run Optimizer")
 
     if st.button("Run Optimizer", type="primary", key="run_optimizer"):
-        with st.spinner("Running optimization loop... (multiple LLM calls per iteration)"):
-            try:
-                report = run_optimization_ui(
-                    query=opt_query,
-                    config=copy.deepcopy(opt_cfg),
-                    version="g1",
-                    target_score=opt_target,
-                    max_iterations=opt_max_iter,
-                    baseline_result=opt_baseline_result,
-                    force_continue=opt_force,
-                )
-                st.session_state["opt_report"] = report
-                save_optimization_run(opt_query, report)
-                st.session_state.pop("opt_prefill_query", None)
-                st.session_state.pop("opt_prefill_config", None)
-                st.session_state.pop("opt_prefill_baseline", None)
-            except Exception as e:
-                st.error(f"Optimizer error: {e}")
+        if not opt_query.strip():
+            st.error("Enter a custom query or select a golden-set query.")
+        else:
+            with st.spinner("Running optimization loop... (multiple LLM calls per iteration)"):
+                try:
+                    report = run_optimization_ui(
+                        query=opt_query,
+                        config=copy.deepcopy(opt_cfg),
+                        version=opt_version,
+                        target_score=opt_target,
+                        max_iterations=opt_max_iter,
+                        baseline_result=opt_baseline_result,
+                        force_continue=opt_force,
+                    )
+                    st.session_state["opt_report"] = report
+                    save_optimization_run(opt_query, report)
+                    # Clear pre-fill state
+                    st.session_state.pop("opt_prefill_query", None)
+                    st.session_state.pop("opt_prefill_config", None)
+                    st.session_state.pop("opt_prefill_baseline", None)
+                    st.session_state.pop("opt_prefill_version", None)
+                except Exception as e:
+                    st.error(f"Optimizer error: {e}")
 
     # ── Display Results ───────────────────────────────────────────────────
     if "opt_report" in st.session_state:

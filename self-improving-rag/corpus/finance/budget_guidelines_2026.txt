@@ -1,5 +1,5 @@
 BUDGET PLANNING GUIDELINES — FY2026
-AutoRAG Solutions Pte Ltd | Finance Department | Confidential | Updated: January 2026
+NorthStar Canada | Finance Department | Confidential | Updated: September 2026
 
 1. OVERVIEW
 
@@ -7,11 +7,11 @@ This document provides guidelines for department heads preparing FY2026 budget s
 
 2. COMPANY FINANCIAL TARGETS FY2026
 
-Revenue target: SGD 18 million
+Revenue target: CAD 24 million
 Gross margin target: 72%
-Total headcount budget: 55 FTE (current: 28 FTE; net new: 27 positions)
-Capital expenditure budget: SGD 1.2 million
-Operating expenditure growth cap: 95% of revenue growth (i.e., for every SGD 1.00 of new revenue, departments may request up to SGD 0.95 of new operating spend)
+Total headcount budget: 58 FTE (current: 34 FTE; net new: 24 positions)
+Capital expenditure budget: CAD 1.5 million
+Operating expenditure growth cap: 95% of revenue growth (for every CAD 1.00 of new revenue, departments may request up to CAD 0.95 of new operating spend)
 
 Departments that demonstrate efficiency improvements in FY2025 will receive priority consideration for incremental budget in FY2026.
 
@@ -26,9 +26,9 @@ All new headcount requests must include:
 
 3.2 Fully-Loaded Cost Assumptions
 When calculating headcount costs, use these fully-loaded multipliers:
-  - Singapore-based employees: base salary x 1.30 (accounts for CPF, benefits, equipment, software licenses, office space)
-  - India-based employees: base salary x 1.25 (accounts for PF, benefits, equipment)
-  - Remote employees: base salary x 1.22 (no office space cost)
+  - Canada-based hybrid employees: base salary x 1.32 (benefits, equipment, software, office space)
+  - Canada-based remote employees: base salary x 1.26 (benefits, equipment, software)
+  - Quebec-based employees: base salary x 1.34 (provincial payroll and benefit administration)
 
 3.3 Approved Headcount by Department (FY2026 Allocation)
   - Engineering: 18 new positions (backend: 8, frontend: 4, DevOps/ML: 6)
@@ -45,42 +45,40 @@ Total approved positions: 37 (additional positions require CEO approval and are 
 4. TECHNOLOGY AND INFRASTRUCTURE BUDGET
 
 4.1 Cloud Infrastructure
-FY2026 cloud infrastructure budget: SGD 720,000 (distributed across AWS, Supabase, and EURI API gateway).
+FY2026 cloud infrastructure budget: CAD 900,000 (distributed across AWS, database services, and the LLM gateway).
 
 Budget allocation by service:
-  - AWS ECS Fargate and supporting services: SGD 310,000
-  - Supabase (PostgreSQL, Vector, Storage): SGD 180,000
-  - EURI API gateway and LLM provider costs (Gemini, KiMi): SGD 180,000
-  - CDN, monitoring (Prometheus/Grafana), and miscellaneous: SGD 50,000
+  - AWS and supporting services: CAD 390,000
+  - Database, vector storage, and backups: CAD 225,000
+  - LLM gateway and model-provider costs: CAD 220,000
+  - CDN, monitoring, and miscellaneous: CAD 65,000
 
 Departments must submit infrastructure requests with projected usage metrics. Unforecasted overages above 15% of the approved budget require Finance approval.
 
 4.2 Software and SaaS Tools
-Total SaaS tools budget: SGD 95,000.
+Total SaaS tools budget: CAD 125,000.
 Approved tools for FY2026:
-  - GitHub Enterprise: SGD 12,000
-  - Jira and Confluence: SGD 8,400
-  - Slack Pro: SGD 7,200
-  - 1Password Teams: SGD 3,600
-  - PagerDuty: SGD 6,000
-  - Grafana Cloud: SGD 9,600
-  - Figma Professional: SGD 4,800
-  - Notion: SGD 3,600
-  - Remaining discretionary tools: SGD 39,800
+  - GitHub Enterprise: CAD 18,000
+  - Jira and Confluence: CAD 13,000
+  - Slack Pro: CAD 10,000
+  - Password manager: CAD 5,000
+  - Incident management: CAD 8,000
+  - Design and research tools: CAD 9,000
+  - Remaining discretionary tools: CAD 62,000
 
-New SaaS subscriptions above SGD 500 per month require Finance and IT approval before purchase.
+New SaaS subscriptions above CAD 750 per month require Finance and IT approval before purchase.
 
 5. TRAVEL AND EVENTS BUDGET
 
 FY2026 travel budget by department:
-  - Sales: SGD 180,000 (client visits, trade shows)
-  - Engineering: SGD 45,000 (conferences, on-site collaboration)
-  - Product: SGD 30,000 (customer research visits, conferences)
-  - All other departments: SGD 25,000 combined
+  - Sales: CAD 210,000 (client visits, trade shows)
+  - Engineering: CAD 60,000 (conferences, on-site collaboration)
+  - Product: CAD 40,000 (customer research visits, conferences)
+  - All other departments: CAD 35,000 combined
 
 Company-wide events:
-  - Annual company offsite (all hands): SGD 120,000 (planned Q2 2026, Bali)
-  - Team quarterly offsites: SGD 5,000 per team per quarter
+  - Annual company offsite (all hands): CAD 150,000 (planned Q2 2026, Montreal)
+  - Team quarterly offsites: CAD 7,500 per team per quarter
 
 6. BUDGET SUBMISSION DEADLINES
 

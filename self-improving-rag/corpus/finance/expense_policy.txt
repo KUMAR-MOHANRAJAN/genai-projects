@@ -1,9 +1,9 @@
 EXPENSE REIMBURSEMENT POLICY
-AutoRAG Solutions Pte Ltd | Version 3.0 | Finance Department | Updated: January 2026
+NorthStar Canada | Version 1.0 | Finance Department | Updated: September 2026
 
 1. PURPOSE AND SCOPE
 
-This policy governs the reimbursement of business expenses incurred by employees and contractors on behalf of AutoRAG Solutions. It applies to all employees globally. Local currency equivalents are calculated at the exchange rate on the date of expenditure. All amounts in this policy are in SGD unless stated otherwise.
+This policy governs the reimbursement of business expenses incurred by NorthStar Canada employees and contractors. All amounts are in Canadian dollars (CAD).
 
 2. GENERAL PRINCIPLES
 
@@ -14,46 +14,46 @@ Employees must not: split expenses to avoid approval thresholds, submit personal
 3. EXPENSE CATEGORIES AND LIMITS
 
 3.1 Travel — Domestic (within country of employment)
-  - Economy class air travel for flights under 4 hours: up to SGD 500 per journey
+  - Economy class air travel for flights under 4 hours: up to CAD 700 per journey
   - Taxi and ride-hailing: receipts required; no daily limit for business travel
-  - Parking: receipts required; up to SGD 50 per day
-  - Accommodation: up to SGD 250 per night for Singapore; up to INR 8,000 per night for India
-  - Meals during domestic travel: up to SGD 80 per day (three meals combined)
+  - Parking: receipts required; up to CAD 45 per day
+  - Accommodation: up to CAD 275 per night in Canada
+  - Meals during domestic travel: up to CAD 90 per day (three meals combined)
 
 3.2 Travel — International
   - Economy class air travel: required for flights under 6 hours
   - Business class permitted for: flights over 6 hours, medical necessity (with documentation), or VP+ level with Director approval
   - Pre-approval required for all international travel via the Travel Request form (minimum 5 business days advance notice)
-  - International accommodation: up to SGD 350 per night in Tier 1 cities (New York, London, Tokyo, Sydney); SGD 250 in all other cities
-  - Meals during international travel: up to SGD 120 per day
+  - International accommodation: up to CAD 425 per night in high-cost cities; CAD 300 in other cities
+  - Meals during international travel: up to CAD 125 per day
   - Travel insurance: booked through the company's corporate travel program; personal travel insurance is not reimbursable
 
 3.3 Client Entertainment
-  - Meals and entertainment with clients or prospects: up to SGD 150 per person per occasion
-  - Events (tickets, activities): up to SGD 200 per person per event
+  - Meals and entertainment with clients or prospects: up to CAD 175 per person per occasion
+  - Events (tickets, activities): up to CAD 225 per person per event
   - Requires: prior manager approval, names and organizations of all attendees documented, clear business purpose stated
-  - Alcohol at client meals: up to SGD 40 per person per occasion; reimbursable only when client is present
-  - Gifts to clients: up to SGD 50 per gift; must comply with client organization's gift policies
+  - Alcohol at client meals: up to CAD 45 per person per occasion; reimbursable only when client is present
+  - Gifts to clients: up to CAD 75 per gift; must comply with client organization's gift policies
 
 3.4 Technology and Equipment
-  - Work-from-home internet subsidy: SGD 50 per month (no receipt required; added to monthly payroll)
-  - Mobile phone bill reimbursement for employees with mobile phone allowance: up to SGD 80 per month with itemized bill
-  - Software subscriptions for business use: require IT approval before purchase; up to SGD 100 per month without Finance Director approval
-  - Hardware (laptop peripherals, monitors): must be approved through IT; home office allowance SGD 500 (one-time, for hybrid workers)
+  - Work-from-home internet subsidy: CAD 60 per month (no receipt required; added to monthly payroll)
+  - Mobile phone bill reimbursement for employees with mobile phone allowance: up to CAD 90 per month with itemized bill
+  - Software subscriptions for business use: require IT approval before purchase; up to CAD 125 per month without Finance Director approval
+  - Hardware (laptop peripherals, monitors): must be approved through IT; home office allowance CAD 600 (one-time, for hybrid workers)
 
 3.5 Professional Development
-  - Refer to the Benefits Guide for L&D budget limits (SGD 2,500 per year)
+  - Refer to the Benefits Guide for L&D budget limits (CAD 2,000 per year)
   - Conference registration and travel are charged against the L&D budget plus the travel budget where applicable
-  - Professional membership fees: up to SGD 300 per year per membership; maximum 2 memberships reimbursable per employee per year
+  - Professional membership fees: up to CAD 400 per year per membership; maximum 2 memberships reimbursable per employee per year
 
 4. APPROVAL MATRIX
 
 | Expense Amount | Approver Required |
 |----------------|-------------------|
-| Up to SGD 500 | Direct manager |
-| SGD 501 to SGD 2,000 | Director |
-| SGD 2,001 to SGD 10,000 | VP |
-| Above SGD 10,000 | CFO |
+| Up to CAD 750 | Direct manager |
+| CAD 751 to CAD 3,000 | Director |
+| CAD 3,001 to CAD 12,000 | VP |
+| Above CAD 12,000 | CFO |
 
 International travel requires an additional Finance team approval regardless of amount.
 

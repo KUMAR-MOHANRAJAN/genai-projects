@@ -167,14 +167,10 @@ def run_optimization(
                 iterations.append(record)
                 stop_reason = "target_reached"
                 print(f"  STOP: {stop_reason} (score {score:.4f} >= {target_score})")
-            if stop_reason == "max_iterations_reached" and gate == "hitl_required":
-                record = _iteration_record(0, current_config, baseline_result)
-                iterations.append(record)
-                stop_reason = "hitl_required"
-                print(f"  STOP: {stop_reason} (score in gray band, needs human)")
-            
+
             if stop_reason == "max_iterations_reached":
-                # Baseline doesn't trigger stop — record it and continue
+                # A Playground baseline may already have been explicitly rejected
+                # by the user, so a HITL-band baseline must still enter the loop.
                 record = _iteration_record(0, current_config, baseline_result)
                 iterations.append(record)
                 last_score = score
@@ -281,7 +277,6 @@ def run_optimization(
                     stop_reason = "no_improvement"
                     print(f"  STOP: {stop_reason} (3 consecutive iterations with delta < {NO_IMPROVEMENT_DELTA})")
                     break
-
             last_score = score
 
             # ── 3. Extract winner candidate ───────────────────────────────────

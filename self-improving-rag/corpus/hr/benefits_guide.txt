@@ -1,35 +1,27 @@
-EMPLOYEE BENEFITS GUIDE — AUTORAG SOLUTIONS PTE LTD
+EMPLOYEE BENEFITS GUIDE - NORTHSTAR CANADA
 FY2026 | People Operations
 
 OVERVIEW
 
-AutoRAG Solutions provides a comprehensive benefits package to all full-time permanent employees. Benefits are effective from the first day of employment unless otherwise stated. This guide summarizes available benefits; refer to the individual benefit plan documents for full terms and conditions.
+NorthStar Canada provides benefits to regular full-time employees from their first day of employment. This guide summarizes company benefits and does not replace plan documents.
 
 1. HEALTH AND WELLNESS
 
 Group Medical Insurance
-All employees receive group medical coverage underwritten by Great Eastern Life. The plan covers:
-- Inpatient hospitalization: SGD 100,000 per year
-- Outpatient general practitioner: SGD 1,500 per year (SGD 50 co-pay per visit)
-- Specialist consultation: SGD 3,000 per year (requires GP referral; 20% co-pay)
-- Dental: SGD 800 per year (basic cleaning and fillings only)
-- Optical: SGD 500 per year (lenses and frames)
+All employees receive extended health, prescription drug, dental, and vision coverage through the group plan. The annual dental maximum is CAD 1,500 and the vision maximum is CAD 400 every 24 months.
 
-Dependents (spouse and children under 21) may be enrolled at the employee's expense. The annual premium for one dependent is SGD 2,400; for a family plan (spouse plus children) it is SGD 4,800. Enrollment changes are permitted only during the annual open enrollment window in November.
+Eligible dependants may be enrolled during onboarding, annual open enrolment in November, or after a qualifying life event.
 
 Mental Health Support
 All employees have access to 6 free counselling sessions per year through our Employee Assistance Program (EAP) provider, Mindfi. Sessions are confidential and can be booked directly through the Mindfi app. Topics covered include stress, anxiety, relationship concerns, and career transitions.
 
 Wellness Allowance
-Employees receive a monthly wellness allowance of SGD 80 credited to their CXA employee benefits wallet. This can be used for gym memberships, fitness classes, meditation apps, or ergonomic equipment for home offices.
+Employees receive a CAD 75 monthly wellness allowance for fitness, wellbeing, or ergonomic home-office expenses. Claims require a receipt and are submitted through the Finance portal.
 
 2. RETIREMENT AND FINANCIAL BENEFITS
 
-Central Provident Fund (Singapore)
-The company contributes to CPF in full accordance with statutory requirements. Contribution rates follow the CPF Board schedule based on age and wage ceiling.
-
-Provident Fund (India)
-For employees based in India, the company contributes 12% of basic salary to the Employee Provident Fund (EPF) in addition to the statutory employer contribution.
+Registered Retirement Savings Plan (RRSP)
+NorthStar matches employee RRSP contributions dollar for dollar up to 4% of base salary after 3 months of service. The company also makes required Canada Pension Plan and Employment Insurance contributions.
 
 Annual Bonus
 Eligible employees may receive an annual performance bonus paid in March. The target bonus is 10% of annual basic salary for employees rated Meets Expectations, up to 20% for Exceptional performers. Employees must be employed on the payout date to receive the bonus.
@@ -40,9 +32,9 @@ Senior employees (Band 6 and above) are eligible for stock options granted annua
 3. LEARNING AND DEVELOPMENT
 
 Training Budget
-Each employee receives an annual L&D budget of SGD 2,500 (or INR 100,000 for India-based employees). This may be used for external courses, certifications, conferences, or books. Claims must be submitted through the Finance portal with receipts within 30 days of expenditure.
+Each employee receives a CAD 2,000 annual learning budget for role-relevant courses, certifications, conferences, or books. Claims must be submitted with receipts within 30 days.
 
-Approved certification reimbursements include: AWS certifications (up to SGD 800), Google Cloud certifications (up to SGD 800), professional certifications relevant to the employee's role. Certification exam fees are reimbursed at 100% upon first pass. Re-sit fees are reimbursed at 50%.
+Certification exam fees are reimbursed at 100% on the first pass and 50% on a re-sit, within the annual learning budget.
 
 Study Leave
 Employees pursuing role-relevant professional qualifications may apply for up to 5 days of paid study leave per year for exams. This is separate from annual leave.
@@ -50,7 +42,7 @@ Employees pursuing role-relevant professional qualifications may apply for up to
 4. FAMILY BENEFITS
 
 Childcare Support
-Employees with children below age 7 receive a monthly childcare subsidy of SGD 150 per child (maximum 2 children). The subsidy is paid directly to the employee's bank account on the last business day of each month.
+Employees with children under age 7 receive a CAD 150 monthly childcare subsidy per child, up to 2 children.
 
 Parental Leave
 Refer to the Leave Policy document for detailed maternity, paternity, and adoption leave entitlements.
@@ -61,4 +53,4 @@ Flexible Work Arrangement
 Eligible employees may adjust their start and end times by up to 2 hours from the standard schedule. Approval requires written agreement from the line manager and must be registered with People Operations.
 
 Remote Work Equipment
-New employees working in a hybrid arrangement are eligible for a one-time home office equipment allowance of SGD 500. This may be used for a monitor, keyboard, mouse, or chair. Purchases must be approved in advance by the IT team and receipts submitted within 60 days.
+Hybrid employees are eligible for a one-time CAD 600 home-office equipment allowance. IT approval is required before purchasing security-sensitive equipment.

@@ -1,6 +1,6 @@
 MASTER VENDOR SERVICES AGREEMENT
-AutoRAG Solutions Pte Ltd ("Company") and [Vendor Name] ("Vendor")
-Template Version 4.1 | Legal Team | Effective upon execution
+NorthStar Canada Inc. ("Company") and [Vendor Name] ("Vendor")
+Template Version 1.0 | Legal Team | Effective upon execution
 
 1. SCOPE OF SERVICES
 
@@ -12,7 +12,7 @@ Template Version 4.1 | Legal Team | Effective upon execution
 
 2. PAYMENT TERMS
 
-2.1 The Company will pay invoices within 30 days of receipt of a valid invoice. Invoices must reference the applicable SOW number, purchase order number, and a detailed description of services rendered.
+2.1 The Company will pay invoices within 30 days of receipt of a valid invoice. Invoices must state the applicable SOW, purchase order, and applicable Canadian sales taxes.
 
 2.2 Late payment will incur interest at 1.5% per month on the outstanding balance, applied from the due date until the date of payment. This interest rate is subject to applicable statutory maximum rates.
 
@@ -42,7 +42,7 @@ Template Version 4.1 | Legal Team | Effective upon execution
 
 5.1 If the Vendor processes personal data on behalf of the Company, the Vendor acts as a data processor and the Company acts as the data controller. The Vendor shall process personal data only on documented instructions from the Company.
 
-5.2 The Vendor must implement appropriate technical and organizational measures to protect personal data against unauthorized access, loss, or destruction. These measures must meet or exceed the standards required by applicable data protection laws including PDPA (Singapore) and GDPR (EU).
+5.2 The Vendor must implement appropriate safeguards against unauthorized access, loss, or destruction. Safeguards must meet applicable Canadian privacy requirements, including PIPEDA where applicable.
 
 5.3 The Vendor must notify the Company within 24 hours of becoming aware of any personal data breach. The notification must include: nature of the breach, categories and approximate number of individuals affected, categories and approximate number of personal data records affected, and immediate steps taken to contain the breach.
 
