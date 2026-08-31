@@ -50,6 +50,13 @@ from agents.diagnoser import diagnoser_node
 from agents.improver import improver_node
 from agents.trace import traced_node
 
+# MLflow tracing — best-effort, graceful fallback
+try:
+    import mlflow
+    _mlflow_trace = mlflow.trace
+except ImportError:
+    _mlflow_trace = lambda **kwargs: lambda fn: fn  # no-op decorator
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Pipeline Node — assemble context + generate (NO ingestion or retrieval)
@@ -58,6 +65,7 @@ from agents.trace import traced_node
 # chunks from state and focuses on context assembly + LLM generation.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+@_mlflow_trace(name="pipeline", span_type="generation")
 @traced_node("pipeline")
 def pipeline_node(state: RunState) -> dict:
     """LangGraph node: assemble context + generate answer.

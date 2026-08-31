@@ -28,6 +28,13 @@ from retrieval.search import search
 from utils import build_collection_name
 from agents.trace import traced_node
 
+# MLflow tracing — best-effort, graceful fallback
+try:
+    import mlflow
+    _mlflow_trace = mlflow.trace
+except ImportError:
+    _mlflow_trace = lambda **kwargs: lambda fn: fn  # no-op decorator
+
 logger = logging.getLogger(__name__)
 
 
@@ -35,6 +42,7 @@ logger = logging.getLogger(__name__)
 # Builder Node — LangGraph node function
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+@_mlflow_trace(name="builder", span_type="retrieval")
 @traced_node("builder")
 def builder_node(state: RunState) -> dict:
     """LangGraph node: ingest if needed, then retrieve.

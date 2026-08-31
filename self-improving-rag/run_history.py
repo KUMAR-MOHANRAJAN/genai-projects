@@ -17,7 +17,11 @@ import json
 import os
 from datetime import datetime, timezone
 
-from agents.mlflow_logger import log_query_run as _mlflow_log_query, log_optimization_run as _mlflow_log_opt
+from agents.mlflow_logger import (
+    log_query_run as _mlflow_log_query,
+    log_summary_to_run,
+    get_active_run_id,
+)
 
 _DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 HISTORY_FILE = os.path.join(_DATA_DIR, "runs_history.jsonl")
@@ -103,7 +107,42 @@ def save_query_run(query: str, config: dict, result: dict, version: str = "v1") 
         "judge_details": result.get("judge_details", {}),
     }
     _append(record)
-    _mlflow_log_query(query, result, config, version)
+
+    # Log summary params/metrics to the existing MLflow run (traces already attached)
+    mlflow_run_id = result.get("_mlflow_run_id")
+    if mlflow_run_id:
+        log_summary_to_run(
+            run_id=mlflow_run_id,
+            params={
+                "chunk_strategy": config.get("chunk_strategy"),
+                "chunk_size": config.get("chunk_size"),
+                "chunk_overlap": config.get("chunk_overlap"),
+                "retrieval_k": config.get("retrieval_k"),
+                "max_context_tokens": config.get("max_context_tokens"),
+                "prompt_template": config.get("prompt_template"),
+                "version": version,
+            },
+            metrics={
+                "unified_score": result.get("unified_score") or 0.0,
+                "faithfulness": result.get("faithfulness") or 0.0,
+                "relevance": result.get("relevance") or 0.0,
+                "correctness": result.get("correctness") or 0.0,
+                "retrieval_score": result.get("retrieval_score") or 0.0,
+                "latency_ms": result.get("latency_ms") or result.get("generation_latency_ms") or 0,
+                "cost_usd": result.get("cost_usd") or result.get("generation_cost_usd") or 0.0,
+                "chunk_count": result.get("chunk_count") or 0,
+                "context_tokens": result.get("context_tokens") or 0,
+            },
+            tags={
+                "gate_decision": result.get("gate_decision", "unknown"),
+            },
+            artifact_name="query_result.json",
+            artifact_data=result,
+        )
+    else:
+        # Fallback: no active run context (e.g. CLI usage), create standalone run
+        _mlflow_log_query(query, result, config, version)
+
     return record
 
 
@@ -131,7 +170,7 @@ def save_optimization_run(query: str, report: dict) -> dict:
         "iterations": _slim_iterations(report.get("iterations", [])),
     }
     _append(record)
-    _mlflow_log_opt(query, report)
+    # MLflow logging handled by optimizer.py (wraps graph.invoke() in active run)
     return record
 
 

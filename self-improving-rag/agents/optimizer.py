@@ -43,7 +43,10 @@ from config import (
     validate_config,
 )
 from agents.graph import build_graph
-from agents.mlflow_logger import log_optimization_run as _mlflow_log_opt
+from agents.mlflow_logger import (
+    log_optimization_run as _mlflow_log_opt,
+    start_optimization_context,
+)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -133,211 +136,217 @@ def run_optimization(
         print(f"  Baseline: pre-supplied (score={baseline_result.get('unified_score')})")
     print(f"{'=' * 70}")
 
-    # ── Handle pre-supplied baseline ──────────────────────────────────────
-    if baseline_result:
-        score = baseline_result.get("unified_score")
-        faithfulness = baseline_result.get("faithfulness")
-        gate = baseline_result.get("gate_decision", "hard_block")
+    # Wrap the entire optimization loop in an MLflow run so that
+    # @mlflow.trace() spans from graph.invoke() attach to this run.
+    mlflow_run_id = None
+    with start_optimization_context(query) as mlflow_run_id:
 
-        print(f"\n── Baseline (from Playground) ──")
-        print(f"  Score: {score:.4f}" if score else "  Score: None")
-        print(f"  Gate:  {gate}")
-        print(f"  Faithfulness: {faithfulness}")
+        # ── Handle pre-supplied baseline ──────────────────────────────────────
+        if baseline_result:
+            score = baseline_result.get("unified_score")
+            faithfulness = baseline_result.get("faithfulness")
+            gate = baseline_result.get("gate_decision", "hard_block")
 
-        # Check stop conditions on baseline
-        if faithfulness is not None and faithfulness < FAITHFULNESS_FLOOR:
-            if force_continue:
-                print(f"  WARNING: faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR} (force_continue=True, continuing)")
-            else:
+            print(f"\n── Baseline (from Playground) ──")
+            print(f"  Score: {score:.4f}" if score else "  Score: None")
+            print(f"  Gate:  {gate}")
+            print(f"  Faithfulness: {faithfulness}")
+
+            # Check stop conditions on baseline
+            if faithfulness is not None and faithfulness < FAITHFULNESS_FLOOR:
+                if force_continue:
+                    print(f"  WARNING: faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR} (force_continue=True, continuing)")
+                else:
+                    record = _iteration_record(0, current_config, baseline_result)
+                    iterations.append(record)
+                    stop_reason = "blocked_faithfulness"
+                    print(f"  STOP: {stop_reason} (faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR})")
+            
+            if stop_reason == "max_iterations_reached" and score is not None and score >= target_score:
                 record = _iteration_record(0, current_config, baseline_result)
                 iterations.append(record)
-                stop_reason = "blocked_faithfulness"
-                print(f"  STOP: {stop_reason} (faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR})")
-        
-        if stop_reason == "max_iterations_reached" and score is not None and score >= target_score:
-            record = _iteration_record(0, current_config, baseline_result)
-            iterations.append(record)
-            stop_reason = "target_reached"
-            print(f"  STOP: {stop_reason} (score {score:.4f} >= {target_score})")
-        if stop_reason == "max_iterations_reached" and gate == "hitl_required":
-            record = _iteration_record(0, current_config, baseline_result)
-            iterations.append(record)
-            stop_reason = "hitl_required"
-            print(f"  STOP: {stop_reason} (score in gray band, needs human)")
-        
-        if stop_reason == "max_iterations_reached":
-            # Baseline doesn't trigger stop — record it and continue
-            record = _iteration_record(0, current_config, baseline_result)
-            iterations.append(record)
+                stop_reason = "target_reached"
+                print(f"  STOP: {stop_reason} (score {score:.4f} >= {target_score})")
+            if stop_reason == "max_iterations_reached" and gate == "hitl_required":
+                record = _iteration_record(0, current_config, baseline_result)
+                iterations.append(record)
+                stop_reason = "hitl_required"
+                print(f"  STOP: {stop_reason} (score in gray band, needs human)")
+            
+            if stop_reason == "max_iterations_reached":
+                # Baseline doesn't trigger stop — record it and continue
+                record = _iteration_record(0, current_config, baseline_result)
+                iterations.append(record)
+                last_score = score
+
+            # If we stopped on baseline, skip to report
+            if stop_reason != "max_iterations_reached":
+                # Build report and return early
+                initial_score = iterations[0]["unified_score"] if iterations else None
+                final_score = iterations[-1]["unified_score"] if iterations else None
+                improvement = (
+                    round(final_score - initial_score, 4)
+                    if initial_score is not None and final_score is not None
+                    else None
+                )
+                report = {
+                    "stop_reason": stop_reason,
+                    "total_iterations": len(iterations),
+                    "initial_score": initial_score,
+                    "final_score": final_score,
+                    "improvement": improvement,
+                    "initial_config": config or DEFAULT_CONFIG,
+                    "final_config": current_config,
+                    "iterations": iterations,
+                }
+                print(f"\n{'=' * 70}")
+                print(f"OPTIMIZER — Loop finished (stopped on baseline)")
+                print(f"  Stop reason: {stop_reason}")
+                print(f"{'=' * 70}\n")
+                _mlflow_log_opt(query, report, run_id=mlflow_run_id)
+                return report
+
+        for iteration in range(1, max_iterations + 1):
+            print(f"\n── Iteration {iteration}/{max_iterations} ──")
+            print(f"  Config: k={current_config.get('retrieval_k')}, "
+                  f"chunk={current_config.get('chunk_size')}, "
+                  f"overlap={current_config.get('chunk_overlap')}, "
+                  f"prompt={current_config.get('prompt_template')}")
+
+            # ── 1. Dispatch graph ─────────────────────────────────────────────
+            # Each iteration gets a fresh graph + thread to avoid state leakage.
+            app = build_graph()
+            thread_id = f"opt-{uuid.uuid4().hex[:8]}"
+
+            initial_state = {
+                "query": query,
+                "config": copy.deepcopy(current_config),
+                "version": version,
+                "improvement_attempt": iteration - 1,
+            }
+
+            result = app.invoke(
+                initial_state,
+                config={"configurable": {"thread_id": thread_id}},
+            )
+
+            score = result.get("unified_score")
+            faithfulness = result.get("faithfulness")
+            gate = result.get("gate_decision", "hard_block")
+
+            print(f"  Score: {score:.4f}" if score else "  Score: None")
+            print(f"  Gate:  {gate}")
+            print(f"  Faithfulness: {faithfulness}")
+
+            # ── 2. Check stop conditions ──────────────────────────────────────
+
+            # Safety first: faithfulness hard block
+            if faithfulness is not None and faithfulness < FAITHFULNESS_FLOOR:
+                if force_continue:
+                    print(f"  WARNING: faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR} (force_continue=True, continuing)")
+                else:
+                    record = _iteration_record(iteration, current_config, result)
+                    iterations.append(record)
+                    stop_reason = "blocked_faithfulness"
+                    print(f"  STOP: {stop_reason} (faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR})")
+                    break
+
+            # Target reached
+            if score is not None and score >= target_score:
+                record = _iteration_record(iteration, current_config, result)
+                iterations.append(record)
+                stop_reason = "target_reached"
+                print(f"  STOP: {stop_reason} (score {score:.4f} >= {target_score})")
+                break
+
+            # HITL required — optimizer cannot bypass human approval
+            if gate == "hitl_required":
+                record = _iteration_record(iteration, current_config, result)
+                iterations.append(record)
+                stop_reason = "hitl_required"
+                print(f"  STOP: {stop_reason} (score in gray band, needs human)")
+                break
+
+            # No improvement plateau
+            if last_score is not None and score is not None:
+                delta = score - last_score
+                if delta < NO_IMPROVEMENT_DELTA:
+                    consecutive_no_improvement += 1
+                else:
+                    consecutive_no_improvement = 0
+
+                if consecutive_no_improvement >= 3:
+                    record = _iteration_record(iteration, current_config, result)
+                    iterations.append(record)
+                    stop_reason = "no_improvement"
+                    print(f"  STOP: {stop_reason} (3 consecutive iterations with delta < {NO_IMPROVEMENT_DELTA})")
+                    break
+
             last_score = score
 
-        # If we stopped on baseline, skip to report
-        if stop_reason != "max_iterations_reached":
-            # Build report and return early
-            initial_score = iterations[0]["unified_score"] if iterations else None
-            final_score = iterations[-1]["unified_score"] if iterations else None
-            improvement = (
-                round(final_score - initial_score, 4)
-                if initial_score is not None and final_score is not None
-                else None
-            )
-            report = {
-                "stop_reason": stop_reason,
-                "total_iterations": len(iterations),
-                "initial_score": initial_score,
-                "final_score": final_score,
-                "improvement": improvement,
-                "initial_config": config or DEFAULT_CONFIG,
-                "final_config": current_config,
-                "iterations": iterations,
-            }
-            print(f"\n{'=' * 70}")
-            print(f"OPTIMIZER — Loop finished (stopped on baseline)")
-            print(f"  Stop reason: {stop_reason}")
-            print(f"{'=' * 70}\n")
-            return report
+            # ── 3. Extract winner candidate ───────────────────────────────────
+            candidates = result.get("improver_candidates", [])
+            if not candidates:
+                record = _iteration_record(iteration, current_config, result)
+                iterations.append(record)
+                stop_reason = "no_candidates"
+                print(f"  STOP: {stop_reason} (graph produced no improvement candidates)")
+                break
 
-    for iteration in range(1, max_iterations + 1):
-        print(f"\n── Iteration {iteration}/{max_iterations} ──")
-        print(f"  Config: k={current_config.get('retrieval_k')}, "
-              f"chunk={current_config.get('chunk_size')}, "
-              f"overlap={current_config.get('chunk_overlap')}, "
-              f"prompt={current_config.get('prompt_template')}")
+            # The last candidate in the list is from this iteration
+            winner = candidates[-1]
 
-        # ── 1. Dispatch graph ─────────────────────────────────────────────
-        # Each iteration gets a fresh graph + thread to avoid state leakage.
-        app = build_graph()
-        thread_id = f"opt-{uuid.uuid4().hex[:8]}"
+            print(f"  Failure: {winner.get('failure_type', '?')}")
+            print(f"  Fix:     {winner.get('rationale', '?')}")
+            print(f"  Delta:   {winner.get('delta', {})}")
 
-        initial_state = {
-            "query": query,
-            "config": copy.deepcopy(current_config),
-            "version": version,
-            "improvement_attempt": iteration - 1,
-        }
+            # Record this iteration (with the variant that will be applied)
+            record = _iteration_record(iteration, current_config, result, applied_variant=winner)
+            iterations.append(record)
 
-        result = app.invoke(
-            initial_state,
-            config={"configurable": {"thread_id": thread_id}},
+            # ── 4. Apply winner's config for next iteration ───────────────────
+            new_config = winner.get("config_after")
+            if new_config is None:
+                stop_reason = "no_candidates"
+                print(f"  STOP: {stop_reason} (winner has no config_after)")
+                break
+
+            current_config = validate_config(new_config)
+            print(f"  → Applied. New config for next iteration: "
+                  f"k={current_config.get('retrieval_k')}, "
+                  f"chunk={current_config.get('chunk_size')}")
+
+        # ── Build report ──────────────────────────────────────────────────────
+        initial_score = iterations[0]["unified_score"] if iterations else None
+        final_score = iterations[-1]["unified_score"] if iterations else None
+        improvement = (
+            round(final_score - initial_score, 4)
+            if initial_score is not None and final_score is not None
+            else None
         )
 
-        score = result.get("unified_score")
-        faithfulness = result.get("faithfulness")
-        gate = result.get("gate_decision", "hard_block")
+        report = {
+            "stop_reason": stop_reason,
+            "total_iterations": len(iterations),
+            "initial_score": initial_score,
+            "final_score": final_score,
+            "improvement": improvement,
+            "initial_config": config or DEFAULT_CONFIG,
+            "final_config": current_config,
+            "iterations": iterations,
+        }
 
-        print(f"  Score: {score:.4f}" if score else "  Score: None")
-        print(f"  Gate:  {gate}")
-        print(f"  Faithfulness: {faithfulness}")
+        print(f"\n{'=' * 70}")
+        print(f"OPTIMIZER — Loop finished")
+        print(f"  Stop reason:     {stop_reason}")
+        print(f"  Iterations:      {len(iterations)}")
+        print(f"  Initial score:   {initial_score}")
+        print(f"  Final score:     {final_score}")
+        print(f"  Improvement:     {improvement}")
+        print(f"{'=' * 70}\n")
 
-        # ── 2. Check stop conditions ──────────────────────────────────────
-
-        # Safety first: faithfulness hard block
-        if faithfulness is not None and faithfulness < FAITHFULNESS_FLOOR:
-            if force_continue:
-                print(f"  WARNING: faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR} (force_continue=True, continuing)")
-            else:
-                record = _iteration_record(iteration, current_config, result)
-                iterations.append(record)
-                stop_reason = "blocked_faithfulness"
-                print(f"  STOP: {stop_reason} (faithfulness {faithfulness:.2f} < {FAITHFULNESS_FLOOR})")
-                break
-
-        # Target reached
-        if score is not None and score >= target_score:
-            record = _iteration_record(iteration, current_config, result)
-            iterations.append(record)
-            stop_reason = "target_reached"
-            print(f"  STOP: {stop_reason} (score {score:.4f} >= {target_score})")
-            break
-
-        # HITL required — optimizer cannot bypass human approval
-        if gate == "hitl_required":
-            record = _iteration_record(iteration, current_config, result)
-            iterations.append(record)
-            stop_reason = "hitl_required"
-            print(f"  STOP: {stop_reason} (score in gray band, needs human)")
-            break
-
-        # No improvement plateau
-        if last_score is not None and score is not None:
-            delta = score - last_score
-            if delta < NO_IMPROVEMENT_DELTA:
-                consecutive_no_improvement += 1
-            else:
-                consecutive_no_improvement = 0
-
-            if consecutive_no_improvement >= 3:
-                record = _iteration_record(iteration, current_config, result)
-                iterations.append(record)
-                stop_reason = "no_improvement"
-                print(f"  STOP: {stop_reason} (3 consecutive iterations with delta < {NO_IMPROVEMENT_DELTA})")
-                break
-
-        last_score = score
-
-        # ── 3. Extract winner candidate ───────────────────────────────────
-        candidates = result.get("improver_candidates", [])
-        if not candidates:
-            record = _iteration_record(iteration, current_config, result)
-            iterations.append(record)
-            stop_reason = "no_candidates"
-            print(f"  STOP: {stop_reason} (graph produced no improvement candidates)")
-            break
-
-        # The last candidate in the list is from this iteration
-        winner = candidates[-1]
-
-        print(f"  Failure: {winner.get('failure_type', '?')}")
-        print(f"  Fix:     {winner.get('rationale', '?')}")
-        print(f"  Delta:   {winner.get('delta', {})}")
-
-        # Record this iteration (with the variant that will be applied)
-        record = _iteration_record(iteration, current_config, result, applied_variant=winner)
-        iterations.append(record)
-
-        # ── 4. Apply winner's config for next iteration ───────────────────
-        new_config = winner.get("config_after")
-        if new_config is None:
-            stop_reason = "no_candidates"
-            print(f"  STOP: {stop_reason} (winner has no config_after)")
-            break
-
-        current_config = validate_config(new_config)
-        print(f"  → Applied. New config for next iteration: "
-              f"k={current_config.get('retrieval_k')}, "
-              f"chunk={current_config.get('chunk_size')}")
-
-    # ── Build report ──────────────────────────────────────────────────────
-    initial_score = iterations[0]["unified_score"] if iterations else None
-    final_score = iterations[-1]["unified_score"] if iterations else None
-    improvement = (
-        round(final_score - initial_score, 4)
-        if initial_score is not None and final_score is not None
-        else None
-    )
-
-    report = {
-        "stop_reason": stop_reason,
-        "total_iterations": len(iterations),
-        "initial_score": initial_score,
-        "final_score": final_score,
-        "improvement": improvement,
-        "initial_config": config or DEFAULT_CONFIG,
-        "final_config": current_config,
-        "iterations": iterations,
-    }
-
-    print(f"\n{'=' * 70}")
-    print(f"OPTIMIZER — Loop finished")
-    print(f"  Stop reason:     {stop_reason}")
-    print(f"  Iterations:      {len(iterations)}")
-    print(f"  Initial score:   {initial_score}")
-    print(f"  Final score:     {final_score}")
-    print(f"  Improvement:     {improvement}")
-    print(f"{'=' * 70}\n")
-
-    # Log to MLflow (best-effort — JSONL still works if MLflow is down)
-    _mlflow_log_opt(query, report)
+        # Log to MLflow — pass run_id so summary attaches to the same run as traces
+        _mlflow_log_opt(query, report, run_id=mlflow_run_id)
 
     return report
 

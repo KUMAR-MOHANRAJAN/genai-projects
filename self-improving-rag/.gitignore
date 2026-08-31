@@ -31,3 +31,11 @@ data/chroma/
 # Internal planning docs (not for public repo)
 GAP_ANALYSIS.md
 PARENT_PATTERNS.md
+
+# MLflow local artifacts
+mlartifacts/
+mlflow.db
+mlruns/
+
+# Runtime data
+data/runs_history.jsonl

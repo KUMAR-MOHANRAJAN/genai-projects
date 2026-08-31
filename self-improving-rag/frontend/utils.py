@@ -26,6 +26,7 @@ from ingest import ingest  # noqa: E402
 from config import DEFAULT_CONFIG, INGEST_PAGES, INGEST_START_PAGE  # noqa: E402
 from ground_truth import TEST_QUERIES  # noqa: E402
 from agents.optimizer import run_optimization  # noqa: E402
+from agents.mlflow_logger import start_query_context  # noqa: E402
 from run_history import save_query_run, save_optimization_run, load_history, clear_history  # noqa: E402
 from vector_store import ChromaStore  # noqa: E402
 
@@ -79,6 +80,9 @@ def run_query(query: str, config: dict, version: str = "v1",
 
     Uses build_collection_name() from agents/builder.py — single source
     of truth for collection naming.
+
+    Wraps graph.invoke() in an MLflow run context so @mlflow.trace()
+    spans attach correctly.
     """
     strategy = config.get("chunk_strategy", "fixed_size")
     chunk_size = config.get("chunk_size", 256)
@@ -97,7 +101,13 @@ def run_query(query: str, config: dict, version: str = "v1",
             book_path=book_path,
         )
 
-    return run_pipeline(query, config, version=version)
+    # Wrap pipeline in MLflow run context so @mlflow.trace() spans attach
+    with start_query_context(query) as mlflow_run_id:
+        result = run_pipeline(query, config, version=version)
+        # Store run_id in result so save_query_run() can log summary to it
+        if mlflow_run_id:
+            result["_mlflow_run_id"] = mlflow_run_id
+        return result
 
 
 def get_ground_truth_queries() -> list[str]:

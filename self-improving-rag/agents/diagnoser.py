@@ -35,6 +35,13 @@ from config import FAITHFULNESS_FLOOR, RETRIEVAL_SIM_FLOOR, LATENCY_CAP_MS
 from agents.trace import traced_node
 from pipeline import _judge_retrieval_relevance
 
+# MLflow tracing — best-effort, graceful fallback
+try:
+    import mlflow
+    _mlflow_trace = mlflow.trace
+except ImportError:
+    _mlflow_trace = lambda **kwargs: lambda fn: fn  # no-op decorator
+
 
 _ABSTENTION_PATTERNS = (
     r"\bi (?:do not|don't) have enough information\b",
@@ -254,6 +261,7 @@ def _classify_failure(state: RunState) -> tuple[str, float, str]:
 # LangGraph Node
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+@_mlflow_trace(name="diagnoser", span_type="diagnosis")
 @traced_node("diagnoser")
 def diagnoser_node(state: RunState) -> dict:
     """LangGraph node: classify pipeline failure into one of 5 types.

@@ -23,6 +23,7 @@ import logging
 import os
 import json
 import urllib.request
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,9 @@ _TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
 
 # Cache the server availability check so we don't probe on every call.
 _server_available: bool | None = None
+
+# Track the current active run_id so summary logging can attach to it.
+_active_run_id: str | None = None
 
 
 def _check_server() -> bool:
@@ -71,6 +75,109 @@ def _set_experiment():
         mlflow.set_experiment(_EXPERIMENT_NAME)
     except Exception as exc:
         logger.debug(f"MLflow experiment setup skipped: {exc}")
+
+
+@contextmanager
+def start_optimization_context(query: str):
+    """Context manager that wraps an optimization loop in a single MLflow run.
+
+    The @mlflow.trace() spans created during graph.invoke() attach to this run.
+    Yields the run_id so summary metrics can be logged to the same run later.
+
+    Usage:
+        with start_optimization_context(query) as run_id:
+            # ... graph invocations happen here, traces attach automatically
+            pass
+        # After context exits, log summary metrics using run_id
+    """
+    global _active_run_id
+    if not _MLFLOW_AVAILABLE or not _check_server():
+        yield None
+        return
+
+    _set_experiment()
+
+    run_id = None
+    try:
+        with mlflow.start_run(run_name=f"optimize: {query[:60]}") as run:
+            run_id = run.info.run_id
+            _active_run_id = run_id
+            _safe_log(mlflow.set_tag, "run_type", "optimization")
+            _safe_log(mlflow.set_tag, "query", query[:200])
+            yield run_id
+    except Exception as exc:
+        logger.debug(f"MLflow optimization context failed: {exc}")
+        yield None
+    finally:
+        _active_run_id = None
+
+
+@contextmanager
+def start_query_context(query: str):
+    """Context manager that wraps a single query pipeline in an MLflow run.
+
+    The @mlflow.trace() spans created during graph.invoke() attach to this run.
+    Stores the run_id in _active_run_id so log_summary_to_run() can find it.
+    """
+    global _active_run_id
+    if not _MLFLOW_AVAILABLE or not _check_server():
+        yield None
+        return
+
+    _set_experiment()
+
+    run_id = None
+    try:
+        with mlflow.start_run(run_name=f"query: {query[:60]}") as run:
+            run_id = run.info.run_id
+            _active_run_id = run_id
+            _safe_log(mlflow.set_tag, "run_type", "query")
+            _safe_log(mlflow.set_tag, "query", query[:200])
+            yield run_id
+    except Exception as exc:
+        logger.debug(f"MLflow query context failed: {exc}")
+        yield None
+    finally:
+        _active_run_id = None
+
+
+def get_active_run_id() -> str | None:
+    """Get the run_id of the current active MLflow run context."""
+    return _active_run_id
+
+
+def log_summary_to_run(run_id: str | None = None, params: dict | None = None,
+                       metrics: dict | None = None, tags: dict | None = None,
+                       artifact_name: str | None = None, artifact_data: dict | None = None):
+    """Log params, metrics, tags, and an artifact to an existing MLflow run.
+
+    Used to log summary data after the graph invocations complete.
+    The run must have been started by start_optimization_context() or
+    start_query_context() in the same process.
+
+    If run_id is None, tries to use the active run_id from the context.
+    """
+    if run_id is None:
+        run_id = _active_run_id
+    if not _MLFLOW_AVAILABLE or not _check_server() or run_id is None:
+        return
+
+    try:
+        # Re-attach to the existing run to log additional data
+        with mlflow.start_run(run_id=run_id, nested=True):
+            if params:
+                for k, v in params.items():
+                    _safe_log(mlflow.log_param, k, v)
+            if metrics:
+                for k, v in metrics.items():
+                    _safe_log(mlflow.log_metric, k, v or 0.0)
+            if tags:
+                for k, v in tags.items():
+                    _safe_log(mlflow.set_tag, k, v)
+            if artifact_name and artifact_data:
+                _log_artifact_json(artifact_name, artifact_data)
+    except Exception as exc:
+        logger.debug(f"MLflow summary logging skipped: {exc}")
 
 
 def log_query_run(query: str, result: dict, config: dict, version: str = "v1") -> str | None:
@@ -118,32 +225,61 @@ def log_query_run(query: str, result: dict, config: dict, version: str = "v1") -
         return None
 
 
-def log_optimization_run(query: str, report: dict) -> str | None:
-    """Log a full optimization loop to MLflow with nested child runs."""
+def log_optimization_run(query: str, report: dict, run_id: str | None = None) -> str | None:
+    """Log a full optimization loop to MLflow with nested child runs.
+
+    If run_id is provided, logs to the existing run (started by
+    start_optimization_context()) instead of creating a new one.
+    This ensures @mlflow.trace() spans attach correctly.
+    """
     if not _MLFLOW_AVAILABLE or not _check_server():
         return None
 
     _set_experiment()
 
     try:
+        init_cfg = report.get("initial_config", {})
+        final_cfg = report.get("final_config", {})
+
+        params = {
+            "initial_chunk_size": init_cfg.get("chunk_size"),
+            "initial_retrieval_k": init_cfg.get("retrieval_k"),
+            "final_chunk_size": final_cfg.get("chunk_size"),
+            "final_retrieval_k": final_cfg.get("retrieval_k"),
+            "stop_reason": report.get("stop_reason"),
+        }
+        metrics = {
+            "initial_score": report.get("initial_score") or 0.0,
+            "final_score": report.get("final_score") or 0.0,
+            "improvement": report.get("improvement") or 0.0,
+            "total_iterations": report.get("total_iterations") or 0,
+        }
+        tags = {
+            "stop_reason": report.get("stop_reason", "unknown"),
+        }
+
+        if run_id:
+            # Log to the existing run (traces already attached)
+            log_summary_to_run(
+                run_id,
+                params=params,
+                metrics=metrics,
+                tags=tags,
+                artifact_name="optimization_report.json",
+                artifact_data=report,
+            )
+            return run_id
+
+        # Fallback: create a new run (no traces — standalone logging)
         parent_name = f"optimize: {query[:60]}"
         with mlflow.start_run(run_name=parent_name) as parent_run:
-            init_cfg = report.get("initial_config", {})
-            final_cfg = report.get("final_config", {})
-
-            _safe_log(mlflow.log_param, "initial_chunk_size", init_cfg.get("chunk_size"))
-            _safe_log(mlflow.log_param, "initial_retrieval_k", init_cfg.get("retrieval_k"))
-            _safe_log(mlflow.log_param, "final_chunk_size", final_cfg.get("chunk_size"))
-            _safe_log(mlflow.log_param, "final_retrieval_k", final_cfg.get("retrieval_k"))
-            _safe_log(mlflow.log_param, "stop_reason", report.get("stop_reason"))
-
-            _safe_log(mlflow.log_metric, "initial_score", report.get("initial_score") or 0.0)
-            _safe_log(mlflow.log_metric, "final_score", report.get("final_score") or 0.0)
-            _safe_log(mlflow.log_metric, "improvement", report.get("improvement") or 0.0)
-            _safe_log(mlflow.log_metric, "total_iterations", report.get("total_iterations") or 0)
-
+            for k, v in params.items():
+                _safe_log(mlflow.log_param, k, v)
+            for k, v in metrics.items():
+                _safe_log(mlflow.log_metric, k, v)
             _safe_log(mlflow.set_tag, "run_type", "optimization")
-            _safe_log(mlflow.set_tag, "stop_reason", report.get("stop_reason", "unknown"))
+            for k, v in tags.items():
+                _safe_log(mlflow.set_tag, k, v)
             _safe_log(mlflow.set_tag, "query", query[:200])
 
             iterations = report.get("iterations", [])

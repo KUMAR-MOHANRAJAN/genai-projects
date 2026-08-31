@@ -46,6 +46,13 @@ if _project_root not in sys.path:
 from state import RunState
 from config import DEFAULT_CONFIG
 
+# MLflow tracing — best-effort, graceful fallback
+try:
+    import mlflow
+    _mlflow_trace = mlflow.trace
+except ImportError:
+    _mlflow_trace = lambda **kwargs: lambda fn: fn  # no-op decorator
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Bounds — clamp values to prevent nonsensical configs
@@ -210,6 +217,7 @@ def _apply_delta(base_config: dict, delta: dict) -> dict:
 # LangGraph Node
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+@_mlflow_trace(name="improver", span_type="improvement")
 def improver_node(state: RunState) -> dict:
     """LangGraph node: propose a config fix based on the diagnosed failure type.
 

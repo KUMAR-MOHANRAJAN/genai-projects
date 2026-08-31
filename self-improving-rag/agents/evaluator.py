@@ -48,7 +48,15 @@ from pipeline import (
     recall_at_k,
 )
 
+# MLflow tracing — best-effort, graceful fallback
+try:
+    import mlflow
+    _mlflow_trace = mlflow.trace
+except ImportError:
+    _mlflow_trace = lambda **kwargs: lambda fn: fn  # no-op decorator
 
+
+@_mlflow_trace(name="evaluator", span_type="evaluation")
 @traced_node("evaluator")
 def evaluator_node(state: RunState) -> dict:
     """LangGraph node: evaluate a completed pipeline run.
