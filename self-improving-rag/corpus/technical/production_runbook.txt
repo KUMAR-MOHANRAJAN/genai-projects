@@ -1,0 +1,92 @@
+PRODUCTION RUNBOOK — AUTORAG ARCHITECT
+Version 2.1 | DevOps Team | On-call Reference | Updated: June 2026
+
+PURPOSE
+
+This runbook is for on-call engineers responding to production incidents on the AutoRAG Architect platform. It covers the most common failure scenarios, diagnostic steps, and remediation procedures. Always create an incident ticket in Jira before beginning remediation.
+
+SEVERITY LEVELS
+
+SEV-1 (Critical): Platform fully unavailable or data loss in progress. Response time: 15 minutes. Escalate immediately to Engineering Lead and CTO.
+SEV-2 (Major): Core functionality degraded affecting more than 25% of users. Response time: 30 minutes. Escalate to Engineering Lead.
+SEV-3 (Minor): Non-critical feature degraded or single-user issue. Response time: 4 hours. Handle during business hours if possible.
+
+QUICK DIAGNOSTIC COMMANDS
+
+Check API health:
+  curl https://api.autorag-solutions.com/health
+
+Check ECS service status:
+  aws ecs describe-services --cluster autorag-prod --services autorag-api autorag-worker
+
+Check Redis connectivity:
+  redis-cli -h <REDIS_ENDPOINT> -p 6379 ping
+
+Check active LangGraph jobs (Redis queue depth):
+  redis-cli -h <REDIS_ENDPOINT> llen autorag:jobs:pending
+
+Check Supabase connection from ECS:
+  aws ecs run-task --task-definition autorag-debug --overrides '{"containerOverrides":[{"name":"api","command":["python","-c","import psycopg2; psycopg2.connect(os.environ[\"SUPABASE_DB_URL\"]); print(\"DB OK\")"]}]}'
+
+SCENARIO 1 — HIGH API LATENCY (p95 > 3s)
+
+Symptoms: Grafana alert "API p95 latency exceeded threshold". Users report slow responses.
+
+Diagnostic steps:
+1. Check if the issue is in the API layer or the worker layer by comparing FastAPI response times vs job completion times in Grafana.
+2. If API layer: check CloudWatch logs for slow database queries. A query taking more than 500ms suggests a missing index or table lock.
+3. If worker layer: check the Redis queue depth. A queue depth above 100 suggests worker capacity is insufficient.
+4. Check active ECS task count: if less than the desired count, tasks may be crash-looping.
+
+Remediation:
+- Slow DB queries: identify the query in CloudWatch, check the EXPLAIN ANALYZE output in Supabase, add index if needed.
+- Worker capacity: scale up ECS worker service to 2x desired count using AWS Console or: aws ecs update-service --cluster autorag-prod --service autorag-worker --desired-count <N>
+- If queue is stuck: restart workers by setting desired count to 0, wait 60 seconds, then restore.
+
+SCENARIO 2 — DEPLOYMENT ROLLBACK
+
+Symptoms: Error rate spike during canary window; auto-rollback may not have triggered.
+
+Manual rollback procedure:
+1. Identify the previous task definition revision: aws ecs describe-task-definition --task-definition autorag-api --query 'taskDefinition.taskDefinitionArn'
+2. Update the ECS service to use the previous revision: aws ecs update-service --cluster autorag-prod --service autorag-api --task-definition autorag-api:<PREVIOUS_REVISION>
+3. Monitor rollback progress: aws ecs describe-services --cluster autorag-prod --services autorag-api
+4. Confirm rollback complete when runningCount equals desiredCount for the old revision.
+5. Trigger a POST /deploy/{deploy_id}/rollback via the API with reason documented.
+6. Update the Jira incident ticket with timeline and root cause.
+
+SCENARIO 3 — REDIS OUTAGE
+
+Symptoms: All new API requests return 503; existing in-flight jobs may still run.
+
+Impact: Task queue is unavailable; new pipeline runs cannot be queued. Cached data is unavailable.
+
+Remediation:
+1. Check ElastiCache status in AWS Console under ElastiCache > Clusters.
+2. If primary node failed and replica promotion is pending, wait up to 60 seconds for automatic promotion.
+3. If promotion fails, manually promote a replica: aws elasticache modify-replication-group --replication-group-id autorag-redis --primary-cluster-id <REPLICA_ID>
+4. Update the REDIS_URL secret in AWS Secrets Manager if the endpoint changed.
+5. Force ECS tasks to restart (they will pick up the new Redis endpoint on next startup): aws ecs update-service --cluster autorag-prod --service autorag-api --force-new-deployment
+
+SCENARIO 4 — LLM PROVIDER FAILURE
+
+Symptoms: Evaluations completing with low scores; worker logs show repeated LLM timeout errors.
+
+Diagnostic: Check worker logs for "LLM provider failed, switching to fallback" messages. Check EURI API status page.
+
+Remediation:
+- The system should automatically fail over: Gemini Flash 3.5 -> KiMi K2.6 -> Gemini 3.5.
+- If all providers are failing, check EURI_API_KEY secret is valid: retrieve from AWS Secrets Manager and test manually.
+- If EURI gateway is down, set environment variable DISABLE_EURI=true to use direct provider APIs (requires separate API keys to be set).
+
+ESCALATION CONTACTS
+
+On-call Engineering Lead: Check PagerDuty schedule
+Platform Team Slack: #platform-oncall
+Supabase Support: support.supabase.com (Priority support SLA: 1 hour for SEV-1)
+AWS Support: console.aws.amazon.com/support (Business support SLA: 1 hour for production)
+EURI API Support: euri-support@euri.com
+
+POST-INCIDENT
+
+All SEV-1 and SEV-2 incidents require a written post-mortem within 48 hours of resolution. Use the template in Confluence under "Engineering / Incident Management". The post-mortem must include: timeline, root cause, impact, remediation steps taken, and action items to prevent recurrence.

@@ -25,9 +25,6 @@ Thumbs.db
 # Chroma DB data
 data/chroma/
 
-# Corpus (book files)
-corpus/
-
 # Zone.Identifier (Windows)
 *:Zone.Identifier
 

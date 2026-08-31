@@ -1,0 +1,81 @@
+EXPENSE REIMBURSEMENT POLICY
+AutoRAG Solutions Pte Ltd | Version 3.0 | Finance Department | Updated: January 2026
+
+1. PURPOSE AND SCOPE
+
+This policy governs the reimbursement of business expenses incurred by employees and contractors on behalf of AutoRAG Solutions. It applies to all employees globally. Local currency equivalents are calculated at the exchange rate on the date of expenditure. All amounts in this policy are in SGD unless stated otherwise.
+
+2. GENERAL PRINCIPLES
+
+Expenses must be: (a) ordinary and necessary for legitimate business purposes, (b) pre-approved where required, (c) supported by original receipts, and (d) submitted within 30 days of incurrence. Expenses submitted after 60 days require Finance Director approval and may be declined.
+
+Employees must not: split expenses to avoid approval thresholds, submit personal expenses as business expenses, or receive reimbursement for the same expense through multiple channels.
+
+3. EXPENSE CATEGORIES AND LIMITS
+
+3.1 Travel — Domestic (within country of employment)
+  - Economy class air travel for flights under 4 hours: up to SGD 500 per journey
+  - Taxi and ride-hailing: receipts required; no daily limit for business travel
+  - Parking: receipts required; up to SGD 50 per day
+  - Accommodation: up to SGD 250 per night for Singapore; up to INR 8,000 per night for India
+  - Meals during domestic travel: up to SGD 80 per day (three meals combined)
+
+3.2 Travel — International
+  - Economy class air travel: required for flights under 6 hours
+  - Business class permitted for: flights over 6 hours, medical necessity (with documentation), or VP+ level with Director approval
+  - Pre-approval required for all international travel via the Travel Request form (minimum 5 business days advance notice)
+  - International accommodation: up to SGD 350 per night in Tier 1 cities (New York, London, Tokyo, Sydney); SGD 250 in all other cities
+  - Meals during international travel: up to SGD 120 per day
+  - Travel insurance: booked through the company's corporate travel program; personal travel insurance is not reimbursable
+
+3.3 Client Entertainment
+  - Meals and entertainment with clients or prospects: up to SGD 150 per person per occasion
+  - Events (tickets, activities): up to SGD 200 per person per event
+  - Requires: prior manager approval, names and organizations of all attendees documented, clear business purpose stated
+  - Alcohol at client meals: up to SGD 40 per person per occasion; reimbursable only when client is present
+  - Gifts to clients: up to SGD 50 per gift; must comply with client organization's gift policies
+
+3.4 Technology and Equipment
+  - Work-from-home internet subsidy: SGD 50 per month (no receipt required; added to monthly payroll)
+  - Mobile phone bill reimbursement for employees with mobile phone allowance: up to SGD 80 per month with itemized bill
+  - Software subscriptions for business use: require IT approval before purchase; up to SGD 100 per month without Finance Director approval
+  - Hardware (laptop peripherals, monitors): must be approved through IT; home office allowance SGD 500 (one-time, for hybrid workers)
+
+3.5 Professional Development
+  - Refer to the Benefits Guide for L&D budget limits (SGD 2,500 per year)
+  - Conference registration and travel are charged against the L&D budget plus the travel budget where applicable
+  - Professional membership fees: up to SGD 300 per year per membership; maximum 2 memberships reimbursable per employee per year
+
+4. APPROVAL MATRIX
+
+| Expense Amount | Approver Required |
+|----------------|-------------------|
+| Up to SGD 500 | Direct manager |
+| SGD 501 to SGD 2,000 | Director |
+| SGD 2,001 to SGD 10,000 | VP |
+| Above SGD 10,000 | CFO |
+
+International travel requires an additional Finance team approval regardless of amount.
+
+5. SUBMISSION PROCEDURE
+
+Expenses must be submitted through the Finance portal (finance.autorag-solutions.com/expenses):
+1. Log in with corporate credentials
+2. Select "New Expense Report"
+3. Attach digital receipts (JPEG or PDF; maximum 5 MB per receipt)
+4. Assign the correct cost centre code (obtain from your manager)
+5. Submit for manager approval
+
+Approved expense reports are paid in the next payroll cycle if submitted before the 20th of the month. Submissions after the 20th are paid in the following month's cycle.
+
+6. NON-REIMBURSABLE EXPENSES
+
+The following are not reimbursable under any circumstances:
+  - Personal purchases, groceries, clothing, or personal care items
+  - Traffic fines, parking tickets, or toll violations incurred during personal use
+  - Alcohol purchased without a client present
+  - Upgrades to business or first class without prior approval
+  - Expenses related to personal social events (team celebrations not on the approved company calendar)
+  - Gym memberships (covered by the separate wellness allowance in Benefits)
+  - Losses or theft of personal items during travel
+  - Currency conversion fees when converting to personal accounts

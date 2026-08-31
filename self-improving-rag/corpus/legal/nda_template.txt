@@ -1,0 +1,55 @@
+MUTUAL NON-DISCLOSURE AGREEMENT
+AutoRAG Solutions Pte Ltd ("Party A") and [Counterparty Name] ("Party B")
+Template Version 2.0 | Legal Team
+
+This Mutual Non-Disclosure Agreement is entered into as of the date of last signature below.
+
+1. PURPOSE
+
+The parties wish to explore a potential business relationship (the "Purpose") and in connection with that exploration may disclose to each other certain confidential and proprietary information. This Agreement governs the use and protection of such information.
+
+2. DEFINITION OF CONFIDENTIAL INFORMATION
+
+"Confidential Information" means any information disclosed by one party (the "Disclosing Party") to the other party (the "Receiving Party") in connection with the Purpose that is designated as confidential at the time of disclosure, or that reasonably should be understood to be confidential given the nature of the information and the circumstances of disclosure.
+
+Confidential Information includes but is not limited to: technical data, trade secrets, research, product plans, products, services, customer lists, markets, software, developments, inventions, processes, formulas, technology, designs, drawings, engineering, hardware configuration information, marketing data, finances, and other business information.
+
+Confidential Information does not include information that:
+(a) is or becomes publicly known through no act or omission of the Receiving Party;
+(b) was rightfully known to the Receiving Party prior to disclosure without restriction;
+(c) is rightfully received from a third party without restriction on disclosure;
+(d) is independently developed by the Receiving Party without use of the Disclosing Party's Confidential Information; or
+(e) is required to be disclosed by law or court order, provided the Receiving Party gives prompt written notice to enable the Disclosing Party to seek a protective order.
+
+3. OBLIGATIONS
+
+Each Receiving Party agrees to:
+(a) Hold the Disclosing Party's Confidential Information in strict confidence using at least the same degree of care used to protect its own confidential information (but in no event less than reasonable care);
+(b) Not disclose Confidential Information to any third party without prior written consent of the Disclosing Party;
+(c) Use Confidential Information solely for the Purpose and for no other purpose;
+(d) Limit disclosure within its organization to employees, contractors, and advisors who have a legitimate need to know for the Purpose and who are bound by confidentiality obligations no less protective than those in this Agreement;
+(e) Promptly notify the Disclosing Party upon discovery of any unauthorized use or disclosure of Confidential Information.
+
+4. RETURN OR DESTRUCTION OF INFORMATION
+
+Upon the written request of the Disclosing Party or upon expiration or termination of this Agreement, the Receiving Party shall promptly return all tangible materials containing Confidential Information and permanently delete all electronic copies. The Receiving Party shall certify such destruction in writing within 10 business days of the request.
+
+5. NO LICENSE
+
+Nothing in this Agreement grants either party any rights in the other party's Confidential Information except as expressly set forth herein. No patent, copyright, trademark, or other intellectual property right is licensed by this Agreement.
+
+6. TERM
+
+This Agreement commences on the date of last signature and continues for 2 years. The confidentiality obligations for any information disclosed during the term survive termination for an additional 3 years, or for trade secrets, for as long as the information remains a trade secret.
+
+7. REMEDIES
+
+Each party acknowledges that unauthorized disclosure of Confidential Information may cause irreparable harm to the Disclosing Party for which monetary damages may be inadequate. The Disclosing Party is therefore entitled to seek injunctive relief or other equitable remedies in addition to any other remedies available at law.
+
+8. GOVERNING LAW
+
+This Agreement is governed by the laws of Singapore. Any dispute arising from this Agreement shall be subject to the exclusive jurisdiction of the courts of Singapore.
+
+9. ENTIRE AGREEMENT
+
+This Agreement constitutes the entire agreement between the parties with respect to the subject matter hereof and supersedes all prior agreements and understandings. Amendments must be in writing and signed by both parties.

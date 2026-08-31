@@ -1,0 +1,63 @@
+MASTER VENDOR SERVICES AGREEMENT
+AutoRAG Solutions Pte Ltd ("Company") and [Vendor Name] ("Vendor")
+Template Version 4.1 | Legal Team | Effective upon execution
+
+1. SCOPE OF SERVICES
+
+1.1 The Vendor agrees to provide the services described in each Statement of Work (SOW) executed under this Master Agreement. Each SOW is incorporated by reference and forms part of this Agreement.
+
+1.2 The Vendor must commence services within 10 business days of an executed SOW unless otherwise agreed in writing. Any delay beyond 15 business days without prior written notice constitutes a material breach.
+
+1.3 The Vendor shall assign a named Account Manager who will be the primary point of contact. The Account Manager must respond to communications from the Company within 1 business day. Changes to the Account Manager require 5 business days written notice.
+
+2. PAYMENT TERMS
+
+2.1 The Company will pay invoices within 30 days of receipt of a valid invoice. Invoices must reference the applicable SOW number, purchase order number, and a detailed description of services rendered.
+
+2.2 Late payment will incur interest at 1.5% per month on the outstanding balance, applied from the due date until the date of payment. This interest rate is subject to applicable statutory maximum rates.
+
+2.3 The Company may dispute any invoice item in writing within 15 days of receipt. Disputed amounts will be placed in escrow pending resolution. Undisputed amounts remain due within the standard 30-day terms.
+
+2.4 The Vendor must maintain accurate records of all billable hours and expenses for a minimum of 3 years after the relevant invoice date. The Company may audit these records upon 10 business days written notice.
+
+3. INTELLECTUAL PROPERTY
+
+3.1 All work product created by the Vendor specifically for and under this Agreement ("Developed IP") is assigned to the Company upon creation. The Vendor waives all moral rights to the extent permissible under applicable law.
+
+3.2 Pre-existing intellectual property owned by the Vendor prior to this Agreement ("Vendor Background IP") remains the property of the Vendor. To the extent that Vendor Background IP is incorporated into Developed IP, the Vendor grants the Company a perpetual, royalty-free, worldwide, irrevocable license to use, modify, and sublicense such Vendor Background IP solely as part of the Developed IP.
+
+3.3 The Company retains ownership of all data, documentation, and materials provided to the Vendor for the purpose of delivering services. The Vendor must return or destroy all Company materials upon termination of this Agreement.
+
+4. CONFIDENTIALITY
+
+4.1 Each party ("Receiving Party") agrees to keep confidential all Confidential Information received from the other party ("Disclosing Party") and to use it only for the purposes of this Agreement. Confidential Information includes all technical, financial, and business information not publicly available.
+
+4.2 The Receiving Party may disclose Confidential Information to employees, contractors, and advisors who have a need to know and are bound by equivalent confidentiality obligations. The Receiving Party is responsible for unauthorized disclosures by such persons.
+
+4.3 Confidentiality obligations survive termination of this Agreement for a period of 5 years, or for trade secrets, for as long as the information remains a trade secret.
+
+4.4 The Vendor must not sub-contract any services under this Agreement without prior written approval from the Company. Approved sub-contractors must execute a confidentiality agreement with terms at least as protective as this clause.
+
+5. DATA PROTECTION
+
+5.1 If the Vendor processes personal data on behalf of the Company, the Vendor acts as a data processor and the Company acts as the data controller. The Vendor shall process personal data only on documented instructions from the Company.
+
+5.2 The Vendor must implement appropriate technical and organizational measures to protect personal data against unauthorized access, loss, or destruction. These measures must meet or exceed the standards required by applicable data protection laws including PDPA (Singapore) and GDPR (EU).
+
+5.3 The Vendor must notify the Company within 24 hours of becoming aware of any personal data breach. The notification must include: nature of the breach, categories and approximate number of individuals affected, categories and approximate number of personal data records affected, and immediate steps taken to contain the breach.
+
+6. LIMITATION OF LIABILITY
+
+6.1 Neither party is liable to the other for indirect, incidental, consequential, or punitive damages arising from this Agreement, regardless of the form of action and whether or not such party was advised of the possibility of such damages.
+
+6.2 The total aggregate liability of either party under this Agreement shall not exceed the total fees paid or payable in the 12 months preceding the event giving rise to the claim.
+
+6.3 The limitations in clauses 6.1 and 6.2 do not apply to: death or personal injury caused by negligence, fraud or fraudulent misrepresentation, breaches of confidentiality causing significant loss, or any other liability that cannot be excluded under applicable law.
+
+7. TERM AND TERMINATION
+
+7.1 This Agreement commences on the execution date and continues until terminated by either party with 30 days written notice, or immediately by either party upon a material breach that remains uncured for 15 days after written notice of the breach.
+
+7.2 The Company may terminate immediately and without penalty if the Vendor becomes insolvent, is placed in administration or receivership, or ceases trading.
+
+7.3 Upon termination, all outstanding invoices for services rendered become immediately due and payable. The Vendor must cease all use of Company materials and return or destroy them within 10 business days.

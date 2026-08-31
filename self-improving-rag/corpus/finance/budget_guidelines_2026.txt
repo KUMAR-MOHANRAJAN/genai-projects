@@ -1,0 +1,92 @@
+BUDGET PLANNING GUIDELINES — FY2026
+AutoRAG Solutions Pte Ltd | Finance Department | Confidential | Updated: January 2026
+
+1. OVERVIEW
+
+This document provides guidelines for department heads preparing FY2026 budget submissions. All budget requests must be submitted through the Finance portal by 15 February 2026. Late submissions will be incorporated into a budget revision in Q2, which may result in delayed headcount approvals.
+
+2. COMPANY FINANCIAL TARGETS FY2026
+
+Revenue target: SGD 18 million
+Gross margin target: 72%
+Total headcount budget: 55 FTE (current: 28 FTE; net new: 27 positions)
+Capital expenditure budget: SGD 1.2 million
+Operating expenditure growth cap: 95% of revenue growth (i.e., for every SGD 1.00 of new revenue, departments may request up to SGD 0.95 of new operating spend)
+
+Departments that demonstrate efficiency improvements in FY2025 will receive priority consideration for incremental budget in FY2026.
+
+3. HEADCOUNT PLANNING
+
+3.1 Headcount Request Process
+All new headcount requests must include:
+  - Business justification: revenue impact or cost savings supported by data
+  - Role level: specify whether the request is for IC levels 1-6 or management levels M1-M3
+  - Start quarter: Q1 (Apr-Jun), Q2 (Jul-Sep), Q3 (Oct-Dec 2026), or Q4 (Jan-Mar 2027)
+  - Salary band: use the approved FY2026 salary bands provided by People Operations
+
+3.2 Fully-Loaded Cost Assumptions
+When calculating headcount costs, use these fully-loaded multipliers:
+  - Singapore-based employees: base salary x 1.30 (accounts for CPF, benefits, equipment, software licenses, office space)
+  - India-based employees: base salary x 1.25 (accounts for PF, benefits, equipment)
+  - Remote employees: base salary x 1.22 (no office space cost)
+
+3.3 Approved Headcount by Department (FY2026 Allocation)
+  - Engineering: 18 new positions (backend: 8, frontend: 4, DevOps/ML: 6)
+  - Sales and Business Development: 5 new positions
+  - Customer Success: 4 new positions
+  - Product and Design: 3 new positions
+  - People Operations: 2 new positions
+  - Finance and Legal: 2 new positions
+  - Marketing: 2 new positions
+  - Leadership and Admin: 1 new position
+
+Total approved positions: 37 (additional positions require CEO approval and are not guaranteed)
+
+4. TECHNOLOGY AND INFRASTRUCTURE BUDGET
+
+4.1 Cloud Infrastructure
+FY2026 cloud infrastructure budget: SGD 720,000 (distributed across AWS, Supabase, and EURI API gateway).
+
+Budget allocation by service:
+  - AWS ECS Fargate and supporting services: SGD 310,000
+  - Supabase (PostgreSQL, Vector, Storage): SGD 180,000
+  - EURI API gateway and LLM provider costs (Gemini, KiMi): SGD 180,000
+  - CDN, monitoring (Prometheus/Grafana), and miscellaneous: SGD 50,000
+
+Departments must submit infrastructure requests with projected usage metrics. Unforecasted overages above 15% of the approved budget require Finance approval.
+
+4.2 Software and SaaS Tools
+Total SaaS tools budget: SGD 95,000.
+Approved tools for FY2026:
+  - GitHub Enterprise: SGD 12,000
+  - Jira and Confluence: SGD 8,400
+  - Slack Pro: SGD 7,200
+  - 1Password Teams: SGD 3,600
+  - PagerDuty: SGD 6,000
+  - Grafana Cloud: SGD 9,600
+  - Figma Professional: SGD 4,800
+  - Notion: SGD 3,600
+  - Remaining discretionary tools: SGD 39,800
+
+New SaaS subscriptions above SGD 500 per month require Finance and IT approval before purchase.
+
+5. TRAVEL AND EVENTS BUDGET
+
+FY2026 travel budget by department:
+  - Sales: SGD 180,000 (client visits, trade shows)
+  - Engineering: SGD 45,000 (conferences, on-site collaboration)
+  - Product: SGD 30,000 (customer research visits, conferences)
+  - All other departments: SGD 25,000 combined
+
+Company-wide events:
+  - Annual company offsite (all hands): SGD 120,000 (planned Q2 2026, Bali)
+  - Team quarterly offsites: SGD 5,000 per team per quarter
+
+6. BUDGET SUBMISSION DEADLINES
+
+15 January: People Operations distributes salary bands and benefits cost assumptions
+31 January: Department heads submit draft headcount plans to People Operations
+15 February: Full budget submissions due in Finance portal
+28 February: Finance consolidates and presents board-ready budget
+15 March: Board approval of FY2026 budget
+01 April: FY2026 budget effective

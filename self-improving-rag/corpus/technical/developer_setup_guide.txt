@@ -1,0 +1,113 @@
+DEVELOPER SETUP GUIDE — AUTORAG ARCHITECT
+Version 1.5 | Engineering Team | Updated: June 2026
+
+PREREQUISITES
+
+Operating System: macOS 13+ or Ubuntu 22.04+ or Windows 11 with WSL2
+Required tools (install before proceeding):
+  - Python 3.11 (use pyenv for version management)
+  - Node.js 20+ (use nvm for version management)
+  - uv 0.4+ (Python package manager: curl -LsSf https://astral.sh/uv/install.sh | sh)
+  - Docker Desktop 4.25+
+  - Git 2.40+
+  - AWS CLI v2 (for production access only; not required for local dev)
+
+INITIAL SETUP (ONE TIME)
+
+Step 1: Clone the repository
+  git clone https://github.com/autorag-solutions/autorag-architect.git
+  cd autorag-architect
+
+Step 2: Get your .env files from the Engineering Lead
+  - Copy .env.example to .env in the repo root and fill in values provided by your lead
+  - Copy autorag-server/.env.example to autorag-server/.env
+  - Copy autorag-client/.env.example to autorag-client/.env.local
+  WARNING: Never commit .env files. They are blocked by .gitignore but double-check before pushing.
+
+Step 3: Install all dependencies
+  make setup
+  This runs: uv sync --all-groups (Python deps) and npm install (Node deps)
+
+Step 4: Install pre-commit hooks
+  uv add --group=dev pre-commit && pre-commit install
+  Hooks run on every commit: ruff (lint), mypy (types), gitleaks (secret scan)
+
+Step 5: Start local services
+  docker compose up -d
+  This starts: PostgreSQL on port 5432, Redis on port 6379
+
+Step 6: Apply database migrations
+  cd autorag-server && uv run alembic upgrade head
+  This creates all tables in the local PostgreSQL instance.
+
+Step 7: Verify setup
+  make lint   (should pass with zero errors)
+  make test   (runs pytest; some tests require Supabase dev credentials)
+
+RUNNING THE APPLICATION
+
+Start the backend API (port 8000):
+  cd autorag-server && uv run uvicorn app.main:app --reload
+
+Start the frontend (port 3000):
+  npm run dev --workspace=autorag-client
+
+Access points:
+  Frontend: http://localhost:3000
+  API docs (Swagger): http://localhost:8000/docs
+  Health check: http://localhost:8000/health
+
+RUNNING TESTS
+
+Python tests (unit only, no external services required):
+  cd autorag-server && uv run pytest tests/unit/ -v
+
+Python tests (integration, requires Supabase dev credentials in .env):
+  cd autorag-server && uv run pytest tests/integration/ -v
+
+TypeScript unit tests:
+  npm test --workspace=autorag-client
+
+TypeScript type check:
+  npm run typecheck --workspace=autorag-client
+
+Run all linting:
+  make lint
+
+ENVIRONMENT VARIABLES REFERENCE
+
+Critical variables for local development:
+
+SUPABASE_URL: The Supabase project URL (format: https://<ref>.supabase.co)
+SUPABASE_ANON_KEY: Public anon key for client-side auth
+SUPABASE_SERVICE_ROLE_KEY: Service role key for server-side operations (keep secret)
+DATABASE_URL: Direct PostgreSQL connection string (used by Alembic and psycopg)
+REDIS_URL: Redis connection string (default: redis://localhost:6379)
+EURI_API_KEY: API key for the EURI gateway (provides access to Gemini and KiMi models)
+GEMINI_EMBEDDING_API_KEY: Separate key for Gemini Embedding 2
+COHERE_API_KEY: Cohere Rerank v3 API key
+
+For local development, PII_MASKING_ENABLED is optional. In dev and production it is required.
+
+COMMON ISSUES
+
+Issue: uv sync fails with "Python 3.11 not found"
+Fix: Install Python 3.11 with pyenv: pyenv install 3.11.9 && pyenv local 3.11.9
+
+Issue: Docker compose postgres fails to start
+Fix: Check if port 5432 is already in use: lsof -i :5432. Kill the conflicting process or change the port in docker-compose.yml.
+
+Issue: "ModuleNotFoundError: No module named 'app'"
+Fix: Run from the autorag-server directory, not the repo root. The PYTHONPATH must include the autorag-server directory.
+
+Issue: TypeScript errors about missing env vars
+Fix: Ensure autorag-client/.env.local exists with NEXT_PUBLIC_API_URL and NEXT_PUBLIC_SUPABASE_URL set.
+
+Issue: Pre-commit hook "gitleaks" blocking commit
+Fix: Check if you have accidentally staged an .env file or a file containing an API key. Run git diff --cached to inspect staged changes.
+
+BRANCHING AND CONTRIBUTION
+
+All feature work is done on branches named feature/<task-id>-<short-description> (e.g., feature/D-15-langraph-retry). Branches are cut from development, not main. Open a PR against development. PRs require at least one peer review and passing CI before merge.
+
+Never commit directly to main, staging, or development. Force pushes are blocked on all protected branches.

@@ -1,0 +1,51 @@
+CODE OF CONDUCT — AUTORAG SOLUTIONS PTE LTD
+Version 1.4 | Effective Date: 01 March 2026 | Owner: Legal & Compliance
+
+PREAMBLE
+
+AutoRAG Solutions is committed to maintaining the highest standards of professional integrity, ethical behavior, and mutual respect. This Code of Conduct establishes the behavioral expectations for all employees, contractors, consultants, and partners acting on behalf of the company.
+
+1. PROFESSIONAL INTEGRITY
+
+Employees must act honestly and transparently in all business dealings. Misrepresentation of qualifications, work outputs, or company capabilities is prohibited. All financial records, timesheets, and expense reports must be accurate and submitted in a timely manner. Falsification of any company document is grounds for immediate termination.
+
+Employees must disclose any actual or potential conflict of interest to their manager and the Legal team before it affects their work. A conflict of interest exists when personal relationships, financial interests, or external activities could impair professional judgment. Common examples include: having a financial interest in a vendor, employing a family member who reports to you, or conducting work for a competitor.
+
+2. CONFIDENTIALITY AND DATA PROTECTION
+
+All employees have access to confidential information about the company, its products, clients, and partners. This information must not be shared outside the company without explicit authorization from the Legal team. Confidentiality obligations continue for 2 years after termination of employment.
+
+Customer data must be handled in accordance with applicable data protection laws including PDPA (Singapore), GDPR (EU), and DPDP (India). Employees who handle personal data must complete the annual data protection training. Any suspected data breach must be reported to the Data Protection Officer within 2 hours of discovery.
+
+3. RESPECT IN THE WORKPLACE
+
+The company is committed to a workplace free from harassment, discrimination, and bullying. This includes verbal, written, physical, and digital conduct. Protected characteristics include age, gender, race, religion, nationality, disability, and sexual orientation.
+
+Harassment means unwanted conduct that violates the dignity of an individual or creates an intimidating, hostile, degrading, humiliating, or offensive environment. A single serious incident may constitute harassment. Bystanders who observe harassment are encouraged to report it.
+
+4. USE OF COMPANY RESOURCES
+
+Company equipment, systems, and resources are provided for legitimate business purposes. Limited personal use is permitted provided it does not interfere with work, consume significant resources, or violate other policies. Company resources must not be used for: operating a competing business, generating personal income, accessing illegal content, or circumventing security controls.
+
+Employees must not install unauthorized software on company devices. All software installations must go through the IT helpdesk. Security patches must be applied promptly when notified by IT.
+
+5. SOCIAL MEDIA AND PUBLIC COMMUNICATIONS
+
+Employees may post on social media but must not: share confidential company information, make disparaging remarks about clients or competitors, or represent personal opinions as company positions. When posting about AutoRAG Solutions, employees must clearly identify that views are personal.
+
+Requests for media comment or analyst briefings must be routed through the Communications team. Unauthorized media statements may result in disciplinary action.
+
+6. ANTI-BRIBERY AND CORRUPTION
+
+The company has a zero-tolerance policy for bribery and corruption in all its forms. Employees must not offer, give, receive, or solicit anything of value to improperly influence a business decision. This applies to interactions with government officials, private sector partners, and any third party.
+
+Gifts and hospitality may only be accepted or offered within the following limits: gifts up to SGD 50 in value, hospitality up to SGD 150 per occasion. Any gift or hospitality above these limits requires prior approval from Legal. All received gifts above SGD 20 must be logged in the Gifts Register.
+
+7. REPORTING VIOLATIONS
+
+Employees who suspect a violation of this Code of Conduct should report it through one of the following channels:
+  - Direct report to the People Operations team
+  - Anonymous whistleblower hotline: 1800-CONDUCT (available 24/7)
+  - Email to ethics@autorag-solutions.com
+
+Reports will be investigated promptly and confidentially. The company prohibits retaliation against anyone who makes a good-faith report. Knowingly making false reports may itself result in disciplinary action.
