@@ -148,22 +148,42 @@ def _render_execution_trace(trace: list, key_prefix: str):
     """
     if not trace:
         return
+
+    # Summary bar
+    total_latency = sum(ev.get("latency_ms", 0) for ev in trace)
+    total_cost = sum(ev.get("cost_usd", 0) or 0.0 for ev in trace)
+    total_tokens = sum(ev.get("tokens", 0) or 0 for ev in trace)
+    errors = sum(1 for ev in trace if ev.get("status") == "error")
+
+    trace_summary = st.columns(4)
+    with trace_summary[0]:
+        st.metric("Total Latency", f"{total_latency}ms")
+    with trace_summary[1]:
+        st.metric("Total Cost", f"${total_cost:.4f}")
+    with trace_summary[2]:
+        st.metric("Total Tokens", f"{total_tokens:,}")
+    with trace_summary[3]:
+        status_icon = "✅" if errors == 0 else f"❌ {errors} error(s)"
+        st.metric("Status", status_icon)
+
+    # Per-node timeline
     rows = [
         {
-            "node": ev.get("node"),
-            "status": ev.get("status"),
-            "latency_ms": ev.get("latency_ms"),
-            "tokens": ev.get("tokens"),
-            "cost_usd": ev.get("cost_usd"),
-            "error": ev.get("error"),
+            "Step": f"{i + 1}",
+            "Node": ev.get("node"),
+            "Status": "✅ success" if ev.get("status") == "success" else "❌ error",
+            "Latency (ms)": ev.get("latency_ms", 0),
+            "Tokens": ev.get("tokens") or "-",
+            "Cost ($)": f"${ev.get('cost_usd', 0) or 0:.4f}",
+            "Error": ev.get("error") or "-",
         }
-        for ev in trace
+        for i, ev in enumerate(trace)
     ]
-    st.markdown("**Execution Trace**")
-    st.dataframe(rows, use_container_width=True, hide_index=True, key=f"trace_{key_prefix}")
+    st.dataframe(rows, use_container_width=True, hide_index=True, key=f"trace_table_{key_prefix}")
 
+    # Node inspector
     labels = [
-        f"{i}: {ev.get('node')} ({ev.get('status')})"
+        f"{i + 1}. {ev.get('node')} ({ev.get('status')}, {ev.get('latency_ms', 0)}ms)"
         for i, ev in enumerate(trace)
     ]
     picked = st.selectbox(
@@ -650,6 +670,12 @@ if active_tab == "Test Playground":
 
             # Collection clearly shown
             st.caption(f"Executed against: `{state.get('_collection', state.get('collection_name', 'N/A'))}`")
+
+            # Execution Trace — observability panel
+            trace = state.get("execution_trace", [])
+            if trace:
+                st.subheader("Execution Trace")
+                _render_execution_trace(trace, key_prefix="pg_trace")
 
             # Retrieved chunks — collapsible per chunk so each can be
             # inspected individually without one giant wall of text.
