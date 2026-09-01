@@ -6,14 +6,14 @@ with different configs.
 
 Nodes:
   builder_node    — ingest-if-needed + retrieval (from agents/builder.py)
-  pipeline_node   — assemble context + generate answer (NO retrieval)
+  generator_node  — assemble context + generate answer (NO retrieval)
   evaluator_node  — 3 LLM judges + unified score + gate decision
   hitl_node       — interrupt() for human approval in gray band
   diagnoser_node  — rule-cascade failure classification (F-01..F-05)
   improver_node   — playbook lookup + config delta → candidate config
 
 Graph flow:
-  START → builder → pipeline → evaluator → [route]
+  START → builder → generator → evaluator → [route]
     deploy_eligible → END
     hitl_required   → hitl → END (approve) or diagnoser (reject)
     hard_block      → diagnoser → improver → END (candidates in state)
@@ -59,15 +59,15 @@ except ImportError:
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Pipeline Node — assemble context + generate (NO ingestion or retrieval)
+# Generator Node — assemble context + generate (NO ingestion or retrieval)
 #
 # Builder handles ingestion + retrieval. This node receives pre-retrieved
 # chunks from state and focuses on context assembly + LLM generation.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-@_mlflow_trace(name="pipeline", span_type="generation")
-@traced_node("pipeline")
-def pipeline_node(state: RunState) -> dict:
+@_mlflow_trace(name="generator", span_type="generation")
+@traced_node("generator")
+def generator_node(state: RunState) -> dict:
     """LangGraph node: assemble context + generate answer.
 
     Builder has already populated state with retrieved_chunks.
@@ -167,7 +167,7 @@ def route_after_hitl(state: RunState) -> str:
 def build_graph(checkpointer=None):
     """Build and compile the linear RAG + evaluation graph.
 
-    The graph runs ONE pass: pipeline → evaluator → (optional: diagnoser →
+    The graph runs ONE pass: generator → evaluator → (optional: diagnoser →
     improver) → END. No internal loop. The optimizer service calls this
     graph repeatedly with different configs to implement the retry loop.
 
@@ -189,7 +189,7 @@ def build_graph(checkpointer=None):
     # Each node function owns its @traced_node decorator (except hitl, which
     # uses interrupt() control flow) — see agents/trace.py.
     graph.add_node("builder", builder_node)
-    graph.add_node("pipeline", pipeline_node)
+    graph.add_node("generator", generator_node)
     graph.add_node("evaluator", evaluator_node)
     graph.add_node("hitl", hitl_node)
     graph.add_node("diagnoser", diagnoser_node)
@@ -200,11 +200,11 @@ def build_graph(checkpointer=None):
     # START → builder (ingest if needed, then retrieve)
     graph.add_edge(START, "builder")
 
-    # builder → pipeline (context assembly + generation)
-    graph.add_edge("builder", "pipeline")
+    # builder → generator (context assembly + generation)
+    graph.add_edge("builder", "generator")
 
-    # pipeline → evaluator (always evaluate after generating)
-    graph.add_edge("pipeline", "evaluator")
+    # generator → evaluator (always evaluate after generating)
+    graph.add_edge("generator", "evaluator")
 
     # evaluator → conditional routing (deploy / hitl / diagnose)
     graph.add_conditional_edges("evaluator", route_after_eval, {
@@ -273,7 +273,7 @@ if __name__ == "__main__":
 
     print(f"\nGraph compiled successfully with {len(graph_obj.nodes)} nodes.")
     print("\nExpected flow (linear — no loop):")
-    print("  START → builder → pipeline → evaluator → [route]")
+    print("  START → builder → generator → evaluator → [route]")
     print("    deploy_eligible → END")
     print("    hitl_required   → hitl → [approve→END | reject→diagnoser]")
     print("    hard_block      → diagnoser → improver → END")
