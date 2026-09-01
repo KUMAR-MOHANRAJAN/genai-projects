@@ -46,6 +46,13 @@ from ground_truth import TEST_QUERIES
 from agents.llm_utils import judge_call as _judge_call_via_utils
 from utils import build_collection_name, compute_gate_decision
 
+# MLflow tracing — best-effort, graceful fallback
+try:
+    import mlflow
+    _mlflow_trace = mlflow.trace
+except ImportError:
+    _mlflow_trace = lambda **kwargs: lambda fn: fn  # no-op decorator
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # LLM-Judge Evaluation (→ migrates to agents/evaluator.py)
 #
@@ -363,6 +370,7 @@ def _compute_unified_score(
 # But this function remains useful for CLI, Streamlit UI, and testing.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+@_mlflow_trace(name="pipeline_run", span_type="rag_pipeline")
 def run_pipeline(
     query: str,
     config: dict | None = None,

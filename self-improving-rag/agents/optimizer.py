@@ -42,7 +42,7 @@ from config import (
     NO_IMPROVEMENT_DELTA,
     validate_config,
 )
-from agents.graph import build_graph
+from agents.graph import build_graph, run_graph
 from agents.mlflow_logger import (
     log_optimization_run as _mlflow_log_opt,
     start_optimization_context,
@@ -225,10 +225,7 @@ def run_optimization(
                 "improvement_attempt": iteration - 1,
             }
 
-            result = app.invoke(
-                initial_state,
-                config={"configurable": {"thread_id": thread_id}},
-            )
+            result = run_graph(app, initial_state, thread_id=thread_id)
 
             score = result.get("unified_score")
             faithfulness = result.get("faithfulness")

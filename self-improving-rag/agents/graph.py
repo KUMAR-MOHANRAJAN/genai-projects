@@ -229,6 +229,31 @@ def build_graph(checkpointer=None):
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Traced graph invocation — parent span for all node spans
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@_mlflow_trace(name="graph_invoke", span_type="orchestration")
+def run_graph(app, initial_state: dict, thread_id: str = "default") -> dict:
+    """Run a compiled graph inside an MLflow parent trace.
+
+    All @mlflow.trace()-decorated nodes become child spans under this parent,
+    producing a proper span tree in the MLflow Traces tab.
+
+    Args:
+        app: Compiled LangGraph application (from build_graph()).
+        initial_state: Initial state dict for the graph.
+        thread_id: Thread ID for checkpointer state isolation.
+
+    Returns:
+        Final state dict after graph execution.
+    """
+    return app.invoke(
+        initial_state,
+        config={"configurable": {"thread_id": thread_id}},
+    )
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Standalone test
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
