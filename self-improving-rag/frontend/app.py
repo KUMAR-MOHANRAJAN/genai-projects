@@ -93,10 +93,7 @@ if st.session_state["dark_mode"]:
 
 
 def _render_judge_details(judge_details: dict, key_prefix: str):
-    """Render per-judge breakdown: claims for faithfulness, reasoning for the rest.
-
-    Collapsible via a selectbox rather than always showing every judge at once.
-    """
+    """Render per-judge breakdown: claims for faithfulness, reasoning for the rest."""
     if not judge_details:
         return
 
@@ -105,23 +102,22 @@ def _render_judge_details(judge_details: dict, key_prefix: str):
         return
 
     with st.expander("LLM-as-Judge Breakdown", expanded=False):
-        picked = st.selectbox("Select judge to inspect", available, key=f"judge_pick_{key_prefix}", index=None)
-        if picked is None:
-            return
-        detail = judge_details.get(picked, {})
-
-        if picked == "faithfulness" and detail.get("claims"):
-            claims = detail["claims"]
-            supported = detail.get("supported", [])
-            rows = [
-                {"claim": c, "supported": (supported[i] if i < len(supported) else None)}
-                for i, c in enumerate(claims)
-            ]
-            st.dataframe(rows, use_container_width=True, hide_index=True, key=f"judge_faith_{key_prefix}")
-        elif detail.get("reasoning"):
-            st.caption(detail["reasoning"])
-            if picked == "correctness" and detail.get("expected_answer"):
-                st.caption(f"Expected: \"{detail['expected_answer'][:150]}\"")
+        tabs = st.tabs([n.title() for n in available])
+        for tab, name in zip(tabs, available):
+            with tab:
+                detail = judge_details.get(name, {})
+                if name == "faithfulness" and detail.get("claims"):
+                    claims = detail["claims"]
+                    supported = detail.get("supported", [])
+                    rows = [
+                        {"claim": c, "supported": (supported[i] if i < len(supported) else None)}
+                        for i, c in enumerate(claims)
+                    ]
+                    st.dataframe(rows, use_container_width=True, hide_index=True, key=f"judge_faith_{key_prefix}_{name}")
+                elif detail.get("reasoning"):
+                    st.caption(detail["reasoning"])
+                    if name == "correctness" and detail.get("expected_answer"):
+                        st.caption(f"Expected: \"{detail['expected_answer'][:150]}\"")
 
 
 def _format_config(cfg: dict) -> str:
@@ -217,23 +213,20 @@ def _render_execution_trace(trace: list, key_prefix: str):
         ]
         st.dataframe(rows, use_container_width=True, hide_index=True, key=f"trace_table_{key_prefix}")
 
-        # Node inspector — NOT pre-selected
-        labels = [
-            f"{i + 1}. {ev.get('node')} ({ev.get('status')}, {ev.get('latency_ms', 0)}ms)"
+        # Node inspector — tabs instead of selectbox to avoid rerun
+        tabs = st.tabs([
+            f"{i + 1}. {ev.get('node')}"
             for i, ev in enumerate(trace)
-        ]
-        picked = st.selectbox(
-            "Inspect node input/output", labels, key=f"trace_pick_{key_prefix}", index=None,
-        )
-        if picked is not None:
-            ev = trace[labels.index(picked)]
-            io_cols = st.columns(2)
-            with io_cols[0]:
-                st.markdown("**Input**")
-                st.json(ev.get("input_summary", {}))
-            with io_cols[1]:
-                st.markdown("**Output**")
-                st.json(ev.get("output_summary", {}))
+        ])
+        for tab, ev in zip(tabs, trace):
+            with tab:
+                io_cols = st.columns(2)
+                with io_cols[0]:
+                    st.markdown("**Input**")
+                    st.json(ev.get("input_summary", {}))
+                with io_cols[1]:
+                    st.markdown("**Output**")
+                    st.json(ev.get("output_summary", {}))
 
 
 def _fmt(val, fmt=".2f", prefix="", suffix=""):
@@ -768,34 +761,50 @@ if active_tab == "Test Playground":
             st.markdown("**Answer**")
             st.info(state.get("answer", "No answer"))
 
-            score_cols = st.columns(5)
-            with score_cols[0]:
-                faith = state.get("faithfulness")
-                st.metric("Faithfulness", f"{faith:.2f}" if faith is not None else "N/A")
-            with score_cols[1]:
-                rel = state.get("relevance")
-                st.metric("Relevance", f"{rel:.2f}" if rel is not None else "N/A")
-            with score_cols[2]:
-                corr = state.get("correctness")
-                st.metric("Correctness", f"{corr:.2f}" if corr is not None else "N/A")
-            with score_cols[3]:
-                ret = state.get("retrieval_score")
-                st.metric("Retrieval", f"{ret:.2f}" if ret is not None else "N/A")
-            with score_cols[4]:
-                unified = state.get("unified_score")
-                st.metric("Unified Score", f"{unified:.2f}" if unified is not None else "N/A")
+            with st.expander("Scores & Metadata", expanded=False):
+                score_cols = st.columns(5)
+                with score_cols[0]:
+                    faith = state.get("faithfulness")
+                    st.metric("Faithfulness", f"{faith:.2f}" if faith is not None else "N/A")
+                with score_cols[1]:
+                    rel = state.get("relevance")
+                    st.metric("Relevance", f"{rel:.2f}" if rel is not None else "N/A")
+                with score_cols[2]:
+                    corr = state.get("correctness")
+                    st.metric("Correctness", f"{corr:.2f}" if corr is not None else "N/A")
+                with score_cols[3]:
+                    ret = state.get("retrieval_score")
+                    st.metric("Retrieval", f"{ret:.2f}" if ret is not None else "N/A")
+                with score_cols[4]:
+                    unified = state.get("unified_score")
+                    st.metric("Unified Score", f"{unified:.2f}" if unified is not None else "N/A")
 
-            # Gate decision — shown as a subtle badge
-            gate = state.get("gate_decision")
-            if gate:
-                gate_col = st.columns(1)[0]
-                with gate_col:
-                    if gate == "deploy_eligible":
-                        st.success(f"Gate: **{gate}**")
-                    elif gate == "hitl_required":
-                        st.warning(f"Gate: **{gate}**")
-                    else:
-                        st.error(f"Gate: **{gate}**")
+                # Gate decision — shown as a subtle badge
+                gate = state.get("gate_decision")
+                if gate:
+                    gate_col = st.columns(1)[0]
+                    with gate_col:
+                        if gate == "deploy_eligible":
+                            st.success(f"Gate: **{gate}**")
+                        elif gate == "hitl_required":
+                            st.warning(f"Gate: **{gate}**")
+                        else:
+                            st.error(f"Gate: **{gate}**")
+
+                meta_cols = st.columns(5)
+                with meta_cols[0]:
+                    st.metric("Cost", f"${state.get('cost_usd') or 0:.4f}")
+                with meta_cols[1]:
+                    st.metric("Latency", f"{state.get('latency_ms', 0)}ms")
+                with meta_cols[2]:
+                    st.metric("Chunks", state.get("chunk_count", 0))
+                with meta_cols[3]:
+                    st.metric("Context Tokens", state.get("context_tokens", 0))
+                with meta_cols[4]:
+                    coll_name = state.get("_collection", state.get("collection_name", ""))
+                    st.metric("Collection", coll_name.split("_")[-2] + "_" + coll_name.split("_")[-1] if "_" in coll_name else coll_name)
+
+                st.caption(f"Executed against: `{state.get('_collection', state.get('collection_name', 'N/A'))}`")
 
             if state.get("failure_type"):
                 st.divider()
@@ -805,21 +814,6 @@ if active_tab == "Test Playground":
                     f"{state.get('root_cause_analysis', 'No root cause analysis available.')}"
                 )
                 st.caption(state.get("remediation_hint", ""))
-
-            meta_cols = st.columns(5)
-            with meta_cols[0]:
-                st.metric("Cost", f"${state.get('cost_usd') or 0:.4f}")
-            with meta_cols[1]:
-                st.metric("Latency", f"{state.get('latency_ms', 0)}ms")
-            with meta_cols[2]:
-                st.metric("Chunks", state.get("chunk_count", 0))
-            with meta_cols[3]:
-                st.metric("Context Tokens", state.get("context_tokens", 0))
-            with meta_cols[4]:
-                coll_name = state.get("_collection", state.get("collection_name", ""))
-                st.metric("Collection", coll_name.split("_")[-2] + "_" + coll_name.split("_")[-1] if "_" in coll_name else coll_name)
-
-            st.caption(f"Executed against: `{state.get('_collection', state.get('collection_name', 'N/A'))}`")
 
             # Execution Trace
             trace = state.get("execution_trace", [])

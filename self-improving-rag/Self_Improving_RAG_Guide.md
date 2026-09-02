@@ -1,802 +1,417 @@
-# Self-Improving RAG: Technical Guide
+# Self-Improving RAG: Architecture and Implementation Guide
 
-**Version**: v1.0 | **Audience**: ML/AI Engineers, Data Engineers, Technical Reviewers
-
----
-
-## Table of Contents
-
-- [Chapter 1: Introduction](#chapter-1-introduction)
-- [Chapter 2: Architecture at a Glance](#chapter-2-architecture-at-a-glance)
-- [Chapter 3: Core Concepts](#chapter-3-core-concepts)
-- [Chapter 4: The Agent Flow](#chapter-4-the-agent-flow)
-  - [Agent 1: Pipeline Agent](#agent-1-pipeline-agent)
-  - [Agent 2: Evaluator (How the Pipeline Is Scored)](#agent-2-evaluator-how-the-pipeline-is-scored)
-  - [Agent 3: Diagnoser (Why a Pipeline Underperforms)](#agent-3-diagnoser-why-a-pipeline-underperforms)
-  - [Agent 4: Improver (Applying a Targeted Fix)](#agent-4-improver-applying-a-targeted-fix)
-- [Chapter 5: The Optimizer Loop](#chapter-5-the-optimizer-loop)
-- [Chapter 6: Using the Streamlit UI](#chapter-6-using-the-streamlit-ui)
-- [Chapter 7: Configuration and Ingestion](#chapter-7-configuration-and-ingestion)
-- [Chapter 8: Troubleshooting and FAQ](#chapter-8-troubleshooting-and-faq)
+**Version:** v2.0  
+**Audience:** ML/AI engineers, data engineers, and technical reviewers
 
 ---
 
-# Chapter 1: Introduction
+## Contents
 
-### What Problem It Solves
+- [Part I: Purpose and Scope](#part-i-purpose-and-scope)
+- [Part II: System Architecture](#part-ii-system-architecture)
+- [Part III: Ingestion, Retrieval, and Generation](#part-iii-ingestion-retrieval-and-generation)
+- [Part IV: Evaluation and Quality Gates](#part-iv-evaluation-and-quality-gates)
+- [Part V: Diagnosis, Improvement, and Optimization](#part-v-diagnosis-improvement-and-optimization)
+- [Part VI: Observability and Operations](#part-vi-observability-and-operations)
+- [Part VII: Configuration, Corpus, and Roadmap](#part-vii-configuration-corpus-and-roadmap)
 
-A RAG pipeline answers questions by retrieving relevant text from documents and passing it to a
-language model. Getting one working is straightforward. Getting one that retrieves the *right*
-passages, doesn't hallucinate, and improves itself when it fails. That requires a structured
-evaluation and improvement loop.
+---
 
-This system implements that loop: **evaluate** the pipeline's output, **diagnose** why it
-underperforms, **improve** the configuration, and **re-evaluate**, in a controlled manner,
-bounded by configurable iteration limits, before escalating to a human reviewer.
+# Part I: Purpose and Scope
+
+## 1.1 Problem Statement
+
+A RAG (Retrieval-Augmented Generation) pipeline answers questions by retrieving
+relevant text from documents and passing it to a language model to generate a
+grounded answer. Getting one working is easy. Getting one that retrieves the
+right passages, does not hallucinate, and stays reliable normally takes manual
+tuning.
+
+Self-Improving RAG automates that tuning loop. It ingests and indexes documents,
+retrieves evidence, generates an answer, evaluates the result, diagnoses why it
+underperformed, proposes a bounded configuration improvement, and evaluates the
+next configuration.
+
+The project does not deploy infrastructure or fine-tune models. A passing result
+is marked **deployment eligible**: it met the quality gate and can progress to a
+deployment workflow outside this learning project.
+
+## 1.2 Design Goals
+
+- Reproduce retrieval experiments through versioned Chroma collections.
+- Separate one pipeline evaluation from multi-iteration optimization.
+- Make scores, evidence, and failure diagnoses inspectable.
+- Use deterministic, bounded configuration changes.
+- Preserve human review for borderline outcomes.
+
+## 1.3 Current Scope
+
+The active corpus contains 10 Canadian workplace-policy documents and 23 golden
+questions. The golden set includes single-source, two-source, and three-source
+questions to test retrieval breadth.
+
+Implemented capabilities include ingestion, dense Chroma retrieval, context
+assembly, answer generation, LLM-based evaluation, quality gates, human review,
+diagnosis, configuration improvement, bounded optimization, Streamlit inspection,
+JSONL history, and MLflow experiment tracking.
+
+---
+
+# Part II: System Architecture
+
+## 2.1 Two Execution Layers
+
+The system has two execution layers:
+
+1. **Single evaluation run:** a LangGraph workflow retrieves evidence, generates
+   an answer, evaluates it, and optionally proposes a configuration change.
+2. **Optimization loop:** an external service invokes the workflow again with the
+   candidate configuration from the prior result.
 
 ```mermaid
 flowchart LR
-    A[Query + Config] --> B[Pipeline]
+    A[Ingest and Index Documents] --> B[Retrieve Evidence]
+    B --> C[Assemble Context and Generate Answer]
+    C --> D[Evaluate Quality]
+    D --> E{Quality Gate}
+
+    E -->|Meets target| F[Deployment Eligible]
+    E -->|Borderline| G[Human Review]
+    E -->|Below target| H[Diagnose Failure]
+    G -->|Approve| F
+    G -->|Reject| H
+
+    H --> I[Propose Bounded Config Improvement]
+    I --> J[Optimizer Runs Next Configuration]
+    J --> B
+
+    D -. Metrics and traces .-> K[MLflow and Run History]
+```
+
+The self-improvement loop uses evaluation results to trigger an observable
+diagnosis and a bounded configuration experiment, reducing the need for
+unstructured manual tuning.
+
+## 2.2 Runtime Components
+
+| Component | Implementation | Responsibility |
+|---|---|---|
+| Ingestor | `ingest.py` | Loads documents, chunks them, embeds chunks, and writes versioned collections. |
+| Builder | `agents/builder.py` | Ensures the requested collection exists, then retrieves evidence. |
+| Retriever | `retrieval/search.py` | Embeds a query and returns the top-$k$ Chroma chunks. |
+| Generator | `agents/graph.py`, `generation/` | Assembles context and generates an answer. |
+| Evaluator | `agents/evaluator.py` | Scores quality and returns a gate decision. |
+| HITL | `agents/graph.py` | Pauses a borderline graph run for approval or rejection. |
+| Diagnoser | `agents/diagnoser.py` | Identifies the main failure mode. |
+| Improver | `agents/improver.py` | Produces one safe configuration candidate. |
+| Optimizer | `agents/optimizer.py` | Coordinates bounded repeated graph invocations. |
+| Observability | `agents/trace.py`, `agents/mlflow_logger.py`, `run_history.py` | Records traces, experiments, and local history. |
+
+## 2.3 Single-Run Graph
+
+The graph is intentionally linear. The Optimizer, not LangGraph, owns retries.
+
+```mermaid
+flowchart LR
+    A[Builder: ingest if needed and retrieve] --> B[Generator: context and answer]
     B --> C[Evaluator]
-    C -->|Score too low| D[Diagnoser]
-    D --> E[Improver]
-    E -->|New config| B
-    C -->|Score acceptable| F[Done]
+    C -->|Deployment eligible| D[End]
+    C -->|Borderline| E[Human review]
+    C -->|Hard block| F[Diagnoser]
+    E -->|Approve| D
+    E -->|Reject| F
+    F --> G[Improver]
+    G --> H[Candidate configuration]
 ```
 
-### System Overview
-
-Self-Improving RAG is an end-to-end RAG system with autonomous quality control. It implements
-five core agents, each with a single responsibility, orchestrated as a LangGraph state machine:
-
-| Agent | Responsibility |
-|-------|---------------|
-| **Pipeline** | Retrieves chunks, assembles context, generates an answer |
-| **Evaluator** | Grades the answer (faithfulness, relevance, correctness) and determines the gate decision |
-| **Diagnoser** | Classifies the root cause of underperformance (one of 5 failure types) |
-| **Improver** | Proposes a specific configuration change based on the diagnosis |
-| **Optimizer** | Orchestrates the improvement loop: baseline → trial iterations → convergence |
-
-### Roadmap
-
-The current release covers the core evaluation and self-improvement loop. The following
-capabilities are planned for subsequent phases:
-
-| Capability | Status |
-|-----------|--------|
-| Evaluate → Diagnose → Improve loop | Implemented |
-| HITL (Human-in-the-Loop) gate | Implemented |
-| Automated ingestion and re-ingestion | Implemented |
-| Production deployment (canary/blue-green rollout) | Planned for Phase 2 |
-| Live monitoring and alerting (Observer agent) | Planned for Phase 2 |
-| F-06 Quality Drift detection | Planned for Phase 2 |
-| MLflow experiment tracking | Planned for Phase 3 |
-| Prometheus/Grafana metrics dashboard | Planned for Phase 3 |
-| Audit logging and compliance trail | Planned for Phase 3 |
-
-[Back to Top](#table-of-contents)
+This structure makes every graph invocation independently inspectable and avoids
+an unbounded circular workflow.
 
 ---
 
-# Chapter 2: Architecture at a Glance
+# Part III: Ingestion, Retrieval, and Generation
 
-### Two-Layer Design
+## 3.1 Ingestor
 
-The system uses a two-layer architecture that separates a single evaluation attempt (the graph)
-from retry orchestration (the optimizer):
+The Ingestor makes documents searchable:
 
-### Layer 1: The Graph (single pass)
+1. Load each selected `.txt` or `.pdf` document.
+2. Apply the configured chunking strategy.
+3. Embed all chunks in a batch.
+4. Store vectors, text, source metadata, and deterministic chunk IDs in Chroma.
 
-Each graph invocation runs the full pipeline once: retrieve → generate → evaluate → route.
-The graph never loops internally. It produces a result and exits.
-
-```mermaid
-flowchart TD
-    START([START]) --> pipeline[Pipeline Agent]
-    pipeline --> evaluator[Evaluator Agent]
-    evaluator --> route{Gate Decision}
-
-    route -->|"score >= 0.85\nAND faith >= 0.50"| deploy_end([END: deploy_eligible])
-
-    route -->|"0.70 <= score < 0.85\nAND faith >= 0.50"| hitl[HITL Gate\ninterrupt]
-    hitl -->|approve| hitl_end([END: approved])
-    hitl -->|reject| diag_hitl[Diagnoser Agent]
-    diag_hitl --> imp_hitl[Improver Agent]
-    imp_hitl --> hitl_done([END: new config proposed])
-
-    route -->|"score < 0.70\nOR faith < 0.50"| diag[Diagnoser Agent]
-    diag --> imp[Improver Agent]
-    imp --> block_end([END: new config proposed])
-```
-
-### Layer 2: The Optimizer (external loop)
-
-The Optimizer sits outside the graph and controls retries. It invokes the graph repeatedly,
-extracting the Improver's suggested configuration after each iteration and feeding it as the
-next iteration's input.
-
-```mermaid
-flowchart TD
-    A[Initial Config] --> B[Invoke Graph\nbaseline]
-    B --> C{Stop Condition Met?}
-    C -->|target_reached| D([Done: target met])
-    C -->|hitl_required| E([Done: human decides])
-    C -->|blocked_faithfulness| F([Done: safety block])
-    C -->|no| G[Extract new config\nfrom Improver]
-    G --> H[Invoke Graph\niteration N]
-    H --> I{Stop Condition Met?}
-    I -->|yes| J([Done: return report])
-    I -->|no, iterations left| G
-    I -->|max_iterations| K([Done: budget exhausted])
-```
-
-### Why Linear, Not Circular
-
-A circular graph (where the Improver loops back to the Pipeline Agent) risks infinite loops
-and makes debugging harder. The linear design means each graph invocation is a pure function:
-same input → same output. The Optimizer owns the retry logic and applies its own stop
-conditions between iterations.
-
-[Back to Top](#table-of-contents)
-
----
-
-# Chapter 3: Core Concepts
-
-### Unified Score
-
-A single number (0 to 1) that answers: *"Overall, how good is this pipeline?"*
-
-It blends five components using a weighted formula:
+Documents are chunked independently; content from different source documents is
+never blended into one chunk.
 
 ```mermaid
 flowchart LR
-    R[Retrieval Recall\nweight: 0.30] --> U((Unified\nScore))
-    Q[Quality Score\nweight: 0.25] --> U
-    F[Faithfulness\nweight: 0.25] --> U
-    L[Latency Penalty\nweight: 0.10] --> U
-    C[Cost Penalty\nweight: 0.10] --> U
+   A[Canadian policy documents] --> B[Load document text]
+   B --> C[Chunk by configured strategy]
+   C --> D[Embed chunks]
+   D --> E[Versioned Chroma collection]
 ```
 
-```
-unified = 0.30 * recall_score
-        + 0.25 * quality_score
-        + 0.25 * faithfulness
-        + 0.10 * latency_penalty
-        + 0.10 * cost_penalty
-```
+## 3.2 Versioned Collections
 
-Where:
-- **recall_score**: keyword-based retrieval precision/recall (no LLM call)
-- **quality_score**: average of relevance and correctness (LLM judge)
-- **faithfulness**: are claims grounded in the retrieved context? (LLM judge)
-- **latency_penalty**: 1.0 if fast, decreasing if slow (saturates at 3000ms)
-- **cost_penalty**: 1.0 if cheap, decreasing with cost
+The collection name is constructed by `build_collection_name()`:
 
-### Gate Decision
-
-The Evaluator uses the unified score and faithfulness to produce a gate decision:
-
-```mermaid
-flowchart TD
-    E[Pipeline Evaluation] --> F{"Faithfulness\n< 0.50?"}
-    F -->|Yes| VETO[hard_block\nSafety Veto]
-    F -->|No| U{"Unified Score\n>= 0.85?"}
-    U -->|Yes| DEPLOY[deploy_eligible\nAuto-accept]
-    U -->|No| H{"Unified Score\n>= 0.70?"}
-    H -->|Yes| HITL[hitl_required\nHuman review]
-    H -->|No| BLOCK[hard_block\nAuto-reject]
+```text
+rag_{version}_{strategy}_{chunk_size}_o{chunk_overlap}
 ```
 
-| Unified Score | Faithfulness | Decision |
-|---------------|-------------|----------|
-| >= 0.85 | >= 0.50 | `deploy_eligible` (autonomous acceptance) |
-| 0.70 - 0.84 | >= 0.50 | `hitl_required` (requires human approval) |
-| < 0.70 | (any) | `hard_block` (rejected, triggers improvement loop) |
-| (any) | < 0.50 | `hard_block` (safety veto, non-negotiable) |
+For example:
 
-**The faithfulness veto is non-negotiable.** A pipeline that scores 0.90 overall but
-hallucinates (faithfulness < 0.50) is blocked. High quality scores never excuse invented facts.
-
-### Failure Types (F-01 to F-05)
-
-When the gate blocks a pipeline, the Diagnoser classifies the root cause:
-
-| Code | Name | Trigger | Meaning |
-|------|------|---------|---------|
-| F-01 | Retrieval Miss | No chunks retrieved or retrieval_score < 0.30 | Failed to find relevant passages |
-| F-02 | Context Overflow | Context fills 95%+ of token budget | Retrieved too much, relevant material was truncated |
-| F-03 | Hallucination | faithfulness < 0.50 | Answer contains claims not supported by the context |
-| F-04 | Answer Incomplete | (catch-all) | Retrieved relevant material but the answer didn't use it |
-| F-05 | Latency Spike | latency > 3000ms | Response time exceeds the acceptable threshold |
-
-**Priority order matters.** The Diagnoser checks F-03 first (safety), then F-01, F-02, F-05,
-and F-04 last (catch-all). First match wins. This prevents a hallucinating pipeline from being
-misdiagnosed as merely "slow."
-
-> **F-06 (Quality Drift)**, detecting score degradation over time across production traffic,
-> is planned for Phase 2, alongside the Observer agent and live monitoring capabilities.
-> The configuration scaffolding (`DRIFT_WINDOW`, `DRIFT_MIN_DROP`) is already defined.
-
-### LLM Judges
-
-Three separate LLM calls evaluate the pipeline's output. The judge model is architecturally
-independent from the generation model, allowing them to be swapped or scaled separately:
-
-| Judge | What it scores | Scale |
-|-------|---------------|-------|
-| Faithfulness | Are all claims in the answer supported by the retrieved context? | 0.0 - 1.0 |
-| Relevance | Does the answer address the question asked? | 0.0 - 1.0 |
-| Correctness | Does the answer match the expected ground truth answer? | 0.0 - 1.0 |
-
-Correctness runs only when ground truth exists for the query (from the golden dataset). For
-ad-hoc questions, it is skipped.
-
-[Back to Top](#table-of-contents)
-
----
-
-# Chapter 4: The Agent Flow
-
-This chapter traces data through each agent: what it receives, what it does, and what it
-returns. Each agent is implemented as a LangGraph node with a defined state contract.
-
-### Workflow at a Glance
-
-```mermaid
-sequenceDiagram
-    participant Q as Query
-    participant P as Pipeline Agent
-    participant E as Evaluator Agent
-    participant D as Diagnoser Agent
-    participant I as Improver Agent
-
-    Q->>P: query + config
-    P->>P: Ingest (if collection empty)
-    P->>P: Retrieve top-k chunks
-    P->>P: Assemble context
-    P->>P: Generate answer (LLM)
-    P->>E: answer, chunks, context, cost, latency
-
-    E->>E: Retrieval metrics (keyword, no LLM)
-    E->>E: LLM Judge: faithfulness
-    E->>E: LLM Judge: relevance
-    E->>E: LLM Judge: correctness
-    E->>E: Compute unified score
-    E->>E: Gate decision
-
-    alt deploy_eligible (score >= 0.85)
-        E-->>Q: Done (auto-accept)
-    else hitl_required (0.70 <= score < 0.85)
-        E-->>Q: Paused (awaiting human review)
-    else hard_block (score < 0.70 or faith < 0.50)
-        E->>D: scores, metrics, config
-        D->>D: Rule cascade (F-03 then F-01 then F-02 then F-05 then F-04)
-        D->>I: failure_type, confidence, remediation hint
-        I->>I: Lookup playbook for failure_type
-        I->>I: Apply delta, clamp to bounds
-        I-->>Q: New config proposed
-    end
+```text
+rag_g1_fixed_size_256_o0
+rag_g1_fixed_size_192_o32
 ```
 
----
+Changing chunking strategy, size, overlap, or version selects a different
+collection. If the collection is empty, the Builder triggers ingestion before
+retrieval. This keeps before/after optimization experiments reproducible.
 
-### Agent 1: Pipeline Agent
+## 3.3 Retriever
 
-**File:** `agents/graph.py`, `pipeline_node()`
+The Retriever embeds the user question and asks Chroma for its top-$k$ nearest
+chunks. `retrieval_k` is the number of chunks returned by the vector store.
 
-**Input:** query, config (chunk_size, retrieval_k, etc.), version
+The current implementation uses single-stage dense retrieval. Every result
+includes text, similarity score, chunk ID, source file, and chunk index.
+
+## 3.4 Generator
+
+The Generator has two responsibilities:
+
+1. `assemble_context()` selects the highest-scoring chunks within
+   `max_context_tokens`.
+2. `generate()` sends the assembled context and original question to the LLM.
+
+It returns the answer plus generation latency and cost. It does not ingest or
+retrieve documents; that separation makes evidence-selection issues distinct
+from answer-generation issues.
 
 ```mermaid
 flowchart LR
-    A[Query] --> B[Embed Query]
-    B --> C[Search ChromaDB\ntop-k chunks]
-    C --> D[Assemble Context\nrespect token budget]
-    D --> E[Generate Answer\nLLM call]
-    E --> F[answer + chunks\n+ cost + latency]
-```
-
-**Process:**
-1. Build collection name: `rag_{version}_{strategy}_{chunk_size}`
-2. Auto-ingest if collection is empty (chunk the corpus, embed, store in ChromaDB)
-3. Embed the query, search ChromaDB for top-k chunks
-4. Assemble context from retrieved chunks (respecting `max_context_tokens`)
-5. Generate answer using the LLM with the assembled context + query
-
-**Output:** answer, retrieved_chunks, context, context_tokens, latency_ms, cost_usd
-
----
-
-### Agent 2: Evaluator (How the Pipeline Is Scored)
-
-**File:** `agents/evaluator.py`, `evaluator_node()`
-
-The Evaluator executes **5 jobs** in sequence. Two are free (no LLM), three require LLM judge calls:
-
-```mermaid
-flowchart TD
-    A[Pipeline Output] --> B[Job 1: Retrieval Metrics\nkeyword precision/recall\nNO LLM call]
-    A --> C[Job 2: Faithfulness Judge\nLLM call]
-    A --> D[Job 3: Relevance Judge\nLLM call]
-    A --> E["Job 4: Correctness Judge\nLLM call (only with ground truth)"]
-
-    B --> F[Job 5: Unified Score\nWeighted formula]
-    C --> F
-    D --> F
-    E --> F
-
-    F --> G{Gate Decision}
-    G -->|">= 0.85 AND faith >= 0.50"| H[deploy_eligible]
-    G -->|"0.70-0.84 AND faith >= 0.50"| I[hitl_required]
-    G -->|"< 0.70 OR faith < 0.50"| J[hard_block]
-```
-
-**Input:** query, answer, context, retrieved_chunks, config, latency_ms, cost_usd
-
-**The 5 Jobs:**
-
-| # | Job | LLM? | What it computes |
-|---|-----|------|-----------------|
-| 1 | Retrieval Metrics | No | Keyword precision@k and recall@k against ground truth keywords |
-| 2 | Faithfulness Judge | Yes | "How many claims in the answer are supported by the context?" |
-| 3 | Relevance Judge | Yes | "Does the answer address the question asked?" |
-| 4 | Correctness Judge | Yes* | "Does the answer match the expected answer?" |
-| 5 | Unified Score | No | Weighted formula combining all metrics → gate decision |
-
-*Correctness only runs when ground truth exists for the query.
-
-**Why this order matters:** Retrieval metrics are computed first because they are free and
-instant. The three LLM judges run next (each is a separate API call). The unified score
-is computed last because it requires all preceding inputs.
-
-**Output:** unified_score, faithfulness, relevance, correctness, gate_decision, gate_reason,
-judge_reasoning
-
----
-
-### Agent 3: Diagnoser (Why a Pipeline Underperforms)
-
-**File:** `agents/diagnoser.py`, `diagnoser_node()`
-
-The Diagnoser activates only when the gate blocks a pipeline. It applies a **deterministic
-rule cascade** with no LLM call. First matching rule wins.
-
-```mermaid
-flowchart TD
-    A[Blocked Pipeline] --> B{"F-03: Hallucination?\nfaithfulness < 0.50"}
-    B -->|Yes| F03[F-03 Hallucination\nconfidence: 0.97]
-    B -->|No| C{"F-01: Retrieval Miss?\nno chunks OR\nretrieval_score < 0.30"}
-    C -->|Yes| F01[F-01 Retrieval Miss\nconfidence: 0.90]
-    C -->|No| D{"F-02: Context Overflow?\ncontext_tokens >= 95%\nof max_context_tokens"}
-    D -->|Yes| F02[F-02 Context Overflow\nconfidence: 0.88]
-    D -->|No| E{"F-05: Latency Spike?\nlatency > 3000ms"}
-    E -->|Yes| F05[F-05 Latency Spike\nconfidence: 0.80]
-    E -->|No| F04[F-04 Answer Incomplete\ncatch-all\nconfidence: 0.70]
-```
-
-**Input:** faithfulness, retrieval_score, context_tokens, latency_ms, config
-
-**Why priority order matters:**
-- **F-03 (Hallucination)** is checked first because safety trumps all other concerns. A
-  hallucinating pipeline must not be misdiagnosed as a retrieval or latency issue.
-- **F-01 (Retrieval Miss)** is checked next because if retrieval fails, everything downstream
-  (context, answer) is unreliable regardless of other symptoms.
-- **F-04 (Answer Incomplete)** is the catch-all. If no specific pattern matched, the
-  answer simply didn't use the retrieved material effectively.
-
-**Output:** failure_type (F-01..F-05), confidence, remediation_hint, root_cause_analysis
-
-```
-Example:
-  Input:  faithfulness=0.80, retrieval_score=0.15, latency=1200ms
-  Output: F-01 (Retrieval Miss), confidence=0.90
-          hint: "Increase retrieval_k or reduce chunk_size"
-          analysis: "retrieval_score 0.15 < floor 0.30"
+   A[User query] --> B[Embed query]
+   B --> C[Chroma top-k retrieval]
+   C --> D[Ranked evidence chunks]
+   D --> E[Context assembly]
+   E --> F[LLM generation]
+   F --> G[Answer, cost, latency]
 ```
 
 ---
 
-### Agent 4: Improver (Applying a Targeted Fix)
+# Part IV: Evaluation and Quality Gates
 
-**File:** `agents/improver.py`, `improver_node()`
+## 4.1 Evaluation Signals
 
-The Improver maps each failure type to a **static playbook** of 3 ordered remediation
-strategies. No LLM call, just deterministic lookup and arithmetic.
+| Signal | Method | Availability |
+|---|---|---|
+| Retrieval score | Keyword precision and recall over retrieved chunks | Golden queries only |
+| Faithfulness | LLM judge checks answer claims against context | All queries |
+| Relevance | LLM judge checks whether the answer addresses the question | All queries |
+| Correctness | LLM judge compares answer with expected answer | Golden queries only |
+| Latency and cost | Generation metadata | All queries |
 
-```mermaid
-flowchart TD
-    A[Failure Type\nfrom Diagnoser] --> B{Which failure?}
-
-    B -->|F-01\nRetrieval Miss| C["Attempt 0: k += 3\nAttempt 1: chunk_size -= 64\nAttempt 2: overlap += 32"]
-    B -->|F-02\nContext Overflow| D["Attempt 0: k -= 2\nAttempt 1: chunk_size -= 64\nAttempt 2: (both)"]
-    B -->|F-03\nHallucination| E["Attempt 0: prompt = v2\nAttempt 1: k -= 2\nAttempt 2: chunk_size -= 64"]
-    B -->|F-04\nIncomplete| F["Attempt 0: k += 2\nAttempt 1: chunk_size += 64\nAttempt 2: overlap += 32"]
-    B -->|F-05\nLatency Spike| G["Attempt 0: k -= 2\nAttempt 1: chunk_size -= 64\nAttempt 2: (both)"]
-
-    C --> H[Apply Delta\nClamp to safe bounds]
-    D --> H
-    E --> H
-    F --> H
-    G --> H
-
-    H --> I[New Config +\nCandidate Record]
-```
-
-**Input:** failure_type, current config, improvement_attempt (0/1/2)
-
-**How deltas are applied:**
-- **Numeric deltas** are additive: `retrieval_k: +3` means add 3 to current value
-- **String deltas** are replacements: `prompt_template: "v2"` replaces the current value
-- All numeric values are **clamped** to safe bounds after applying the delta:
-
-| Knob | Min | Max |
-|------|-----|-----|
-| `chunk_size` | 64 | 1024 |
-| `chunk_overlap` | 0 | 128 |
-| `retrieval_k` | 1 | 20 |
-| `max_context_tokens` | 1000 | 8000 |
-
-**Output:** new config, candidate record (variant_id, delta, rationale, config before/after)
-
-```
-Example: F-01 (Retrieval Miss), attempt 0:
-  Delta:     { retrieval_k: +3 }
-  Before:    { retrieval_k: 1, chunk_size: 64 }
-  After:     { retrieval_k: 4, chunk_size: 64 }
-  Rationale: "Increase retrieval breadth to capture more relevant passages"
-```
-
-**Why a static playbook?** Determinism, safety, and cost. The playbook guarantees: (a) the
-same diagnosis always produces the same fix, (b) all fixes are bounded within safe ranges,
-and (c) zero additional LLM calls per iteration.
-
----
-
-### Complete Data Flow
-
-```mermaid
-flowchart TD
-    subgraph "Pipeline Agent"
-        P1[Embed Query] --> P2[Search ChromaDB]
-        P2 --> P3[Assemble Context]
-        P3 --> P4[Generate Answer]
-    end
-
-    subgraph "Evaluator Agent"
-        E1[Retrieval Metrics\nno LLM] --> E5[Unified Score]
-        E2[Faithfulness Judge\nLLM] --> E5
-        E3[Relevance Judge\nLLM] --> E5
-        E4[Correctness Judge\nLLM] --> E5
-        E5 --> E6{Gate}
-    end
-
-    subgraph "Diagnoser Agent"
-        D1{"F-03?"} -->|no| D2{"F-01?"}
-        D2 -->|no| D3{"F-02?"}
-        D3 -->|no| D4{"F-05?"}
-        D4 -->|no| D5[F-04]
-    end
-
-    subgraph "Improver Agent"
-        I1[Lookup Playbook] --> I2[Apply Delta]
-        I2 --> I3[Clamp Bounds]
-        I3 --> I4[New Config]
-    end
-
-    P4 -->|"answer, chunks,\ncontext, cost"| E1
-    P4 --> E2
-    P4 --> E3
-    P4 --> E4
-
-    E6 -->|deploy_eligible| DONE([Done])
-    E6 -->|hitl_required| HITL([Human Review])
-    E6 -->|hard_block| D1
-
-    D1 -->|matched| I1
-    D2 -->|matched| I1
-    D3 -->|matched| I1
-    D4 -->|matched| I1
-    D5 --> I1
-
-    I4 -->|"Config returned\nto Optimizer"| OPT([Optimizer picks up\nnew config for next iteration])
-```
-
-[Back to Top](#table-of-contents)
-
----
-
-# Chapter 5: The Optimizer Loop
-
-The Optimizer sits outside the graph. It invokes `graph.invoke()` repeatedly, extracting the
-Improver's suggested configuration after each iteration and feeding it as the next iteration's
-starting config.
-
-### Loop Structure
-
-```mermaid
-flowchart TD
-    A[Start: query + initial_config] --> B[Invoke Graph → baseline result]
-    B --> C{Check Stop Conditions}
-
-    C -->|"1. faith < 0.50"| S1([STOP: blocked_faithfulness])
-    C -->|"2. score >= 0.85"| S2([STOP: target_reached])
-    C -->|"3. gate = hitl"| S3([STOP: hitl_required])
-    C -->|"4. delta < 0.01 x3"| S4([STOP: no_improvement])
-    C -->|"5. no candidates"| S5([STOP: no_candidates])
-    C -->|"6. budget exhausted"| S6([STOP: max_iterations])
-
-    C -->|"None triggered"| D[Extract new config\nfrom Improver candidates]
-    D --> E[Invoke Graph → iteration N result]
-    E --> F[Compare score to previous]
-    F --> C
-```
-
-### Stop Condition Priority
-
-Stop conditions are checked in a **safety-first** order:
-
-1. **Faithfulness block**: a hallucinating pipeline must never be retried with a different
-   retrieval config. The problem is the model, not the settings.
-2. **Target reached**: success. The pipeline meets the quality bar.
-3. **HITL required**: the score is in the gray band (0.70-0.85). The Optimizer cannot
-   make this decision. A human reviewer must.
-4. **No improvement**: three consecutive iterations with delta < 0.01 indicates the
-   playbook is exhausted for this failure type.
-5. **No candidates**: the Improver produced no fix. This is a defensive check and should
-   not occur with the current playbook.
-6. **Max iterations**: budget cap. Default is 3.
-
-### Illustrative Example
-
-**Starting point:** query = "How do embeddings represent meaning?"
+Ad-hoc queries have no ground-truth answer or retrieval keywords. The system does
+not fabricate unavailable evaluation signals.
 
 ```mermaid
 flowchart LR
-    B["Baseline\nk=1, chunk=64\nscore: 0.43\nF-01"] -->|"fix: k +3"| I1["Iteration 1\nk=4, chunk=64\nscore: 0.58\nF-04"]
-    I1 -->|"fix: k +3"| I2["Iteration 2\nk=7, chunk=64\nscore: 0.72\nhitl_required"]
-    I2 --> STOP([STOP\nhitl_required\nScore in gray band])
+   A[Answer and retrieved context] --> B[Faithfulness judge]
+   A --> C[Relevance judge]
+   A --> D[Correctness judge for golden queries]
+   E[Retrieved chunks] --> F[Retrieval metrics]
+   B --> G[Unified score]
+   C --> G
+   D --> G
+   F --> G
+   G --> H{Quality gate}
+   H -->|Pass| I[Deployment eligible]
+   H -->|Borderline| J[Human review]
+   H -->|Low score or safety veto| K[Diagnosis]
 ```
 
-| Iteration | Config | Score | Failure | Fix Applied |
-|-----------|--------|-------|---------|-------------|
-| Baseline | k=1, chunk=64 | 0.43 | F-01 (Retrieval Miss) | (initial) |
-| 1 | k=4, chunk=64 | 0.58 | F-04 (Answer Incomplete) | k +3 |
-| 2 | k=7, chunk=64 | 0.72 | (HITL band) | k +3 |
-| Stop | | | hitl_required | Score in gray band |
+## 4.2 Unified Score
 
-The Optimizer improved the score from 0.43 to 0.72 in two iterations by increasing retrieval
-breadth, then stopped because the score entered the HITL band where a human reviewer must
-decide.
+Quality combines correctness and relevance:
 
-### Before vs After
+```text
+quality = 0.6 * correctness + 0.4 * relevance
+```
 
-| Metric | Before | After |
-|--------|--------|-------|
-| Unified Score | 0.43 | 0.72 |
-| Faithfulness | 1.00 | 1.00 |
-| Relevance | 0.60 | 1.00 |
-| Retrieval k | 1 | 7 |
-| Gate Decision | hard_block | hitl_required |
+When correctness is unavailable, quality falls back to relevance.
 
-### Optimizer Scope
+```text
+score = 0.25 * retrieval
+      + 0.35 * quality
+      + 0.25 * faithfulness
+      - 0.10 * min(latency_ms / 3000, 1)
+      - 0.05 * min(cost_usd / 0.01, 1)
+```
 
-The Optimizer adjusts retrieval and chunking configuration knobs within bounded ranges. It does
-**not**:
+When a positive signal is unavailable, available positive weights are
+re-normalized to $0.85$. The latency and cost penalty budgets remain unchanged.
 
-- Modify the underlying model or fine-tune weights
-- Re-train or swap embedding models
-- Add new documents to the corpus
-- Perform prompt engineering beyond switching between predefined prompt template versions
+## 4.3 Gate Decisions
 
-[Back to Top](#table-of-contents)
+| Condition | Gate decision | Outcome |
+|---|---|---|
+| Faithfulness below $0.50$ | `hard_block` | Safety veto. |
+| Unified score at least $0.85$ | `deploy_eligible` | Meets the quality target. |
+| Unified score from $0.70$ to below $0.85$ | `hitl_required` | Human approval or rejection. |
+| Unified score below $0.70$ | `hard_block` | Diagnose and propose a change. |
+
+Faithfulness is checked first. A fluent answer with unsupported claims is not
+eligible for deployment.
 
 ---
 
-# Chapter 6: Using the Streamlit UI
+# Part V: Diagnosis, Improvement, and Optimization
 
-The interface is organized into three tabs, each serving a distinct purpose in the workflow.
+## 5.1 Failure Taxonomy
+
+The Diagnoser is a deterministic cascade. Explicit abstentions are handled
+first: no evidence is a retrieval miss, while an abstention despite relevant
+evidence is an incomplete answer.
+
+| Priority | Code | Failure | Primary signal | Typical response |
+|---|---|---|---|---|
+| 1 | F-01 / F-04 | Explicit abstention | No evidence or relevant evidence unused | Broaden retrieval or improve context. |
+| 2 | F-03 | Hallucination | Faithfulness below $0.50$ | Strengthen grounding and evidence coverage. |
+| 3 | F-01 | Retrieval Miss | Retrieval score below $0.30$ | Retrieve more or use finer chunks. |
+| 4 | F-02 | Context Overflow | Context at least 95% of budget | Reduce evidence volume or adjust budget. |
+| 5 | F-05 | Latency Spike | Generation latency above 3000 ms | Reduce retrieval/context work. |
+| 6 | F-04 | Answer Incomplete | Remaining low-quality result | Improve coverage or context coherence. |
+
+The Diagnoser returns a failure code, confidence, remediation hint, and a
+human-readable root-cause explanation.
+
+## 5.2 Improver
+
+The Improver selects one candidate from a predefined playbook. It makes no LLM
+call and cannot make unbounded changes.
+
+| Failure | Typical first adjustment |
+|---|---|
+| F-01 Retrieval Miss | Increase `retrieval_k`. |
+| F-02 Context Overflow | Reduce `retrieval_k`. |
+| F-03 Hallucination | Use prompt template `v2` and increase `retrieval_k`. |
+| F-04 Answer Incomplete | Increase `retrieval_k`. |
+| F-05 Latency Spike | Reduce `retrieval_k`. |
+
+Later attempts can adjust `chunk_size`, `chunk_overlap`, and prompt template.
+All changes are clamped to safe bounds.
 
 ```mermaid
 flowchart LR
-    subgraph "Tab 1: Pipeline"
-        T1[Run single query\nInspect all steps]
-    end
-    subgraph "Tab 2: Optimization"
-        T2[Run improvement loop\nView iterations]
-    end
-    subgraph "Tab 3: History"
-        T3[Review past runs\nScore trends]
-    end
-    T1 --> T2 --> T3
+   A[Low-quality result] --> B[Diagnoser]
+   B --> C[Failure type and remediation hint]
+   C --> D[Improver playbook]
+   D --> E[Bounded config delta]
+   E --> F[Candidate configuration]
 ```
 
-### Tab 1: Pipeline
+## 5.3 Optimizer
 
-**Purpose:** Execute a single RAG query and inspect every step of the pipeline output.
+The Optimizer records the baseline as iteration 0 and repeatedly invokes the
+graph with an improved configuration. It stops on target reached, faithfulness
+block, a new HITL result, no candidate, sustained lack of improvement, or the
+iteration budget.
 
-| Section | What it shows |
-|---------|--------------|
-| Document Selection | Select a document from the corpus or upload a new one |
-| Initialize Pipeline | Ingest the document with the configured chunking strategy |
-| Ask a Question | Free-text input or select from the golden dataset |
-| Results | Answer, all scores (faithfulness, relevance, correctness, unified), gate decision |
-| Metadata | Cost, latency, chunk count, collection name |
-| Retrieved Chunks | The text chunks retrieved, with similarity scores |
-
-**Sidebar controls** affect Tab 1: chunk strategy, chunk size, overlap, retrieval k, max
-context tokens, version string, max pages to ingest.
-
-### Tab 2: Optimization
-
-**Purpose:** Run the self-improvement loop and observe each iteration's diagnosis and fix.
-
-| Section | What it shows |
-|---------|--------------|
-| Setup | Query selection, config presets (Degraded / Default), editable config fields |
-| Baseline Run | Full pipeline result with all metrics |
-| Optimizer Run | Per-iteration expandable details: scores, diagnosis, fix applied, delta |
-| HITL Decision | Accept or reject. Rejection triggers re-optimization |
-| Before vs After | Side-by-side comparison of initial and final configs, scores, and chunks |
-
-**Config presets:**
-- **Degraded Config**: k=1, chunk_size=64, intentionally suboptimal for demonstrating improvement
-- **Default Config**: k=5, chunk_size=256, baseline for the current corpus
-
-### Tab 3: History
-
-**Purpose:** Review historical runs and track quality trends over time.
-
-| Section | What it shows |
-|---------|--------------|
-| Pipeline Queries | Past single-query runs with scores and configurations |
-| Optimization Loops | Past optimizer runs with per-iteration decision chains |
-| Summary Stats | Aggregate score metrics across all runs |
-| Score Trend | Line chart of unified scores over time |
-
-History is persisted in `data/runs_history.jsonl` as an append-only store. MLflow integration
-for full experiment tracking is planned for Phase 3.
-
-[Back to Top](#table-of-contents)
-
----
-
-# Chapter 7: Configuration and Ingestion
-
-### Configuration Knobs
-
-All configuration is centralized in `config.py`. The Optimizer sweeps these knobs during the
-improvement loop:
-
-| Knob | Default | Range | What it controls |
-|------|---------|-------|-----------------|
-| `chunk_size` | 256 | 64 - 1024 | Token count per chunk |
-| `chunk_overlap` | 0 | 0 - 128 | Overlap between consecutive chunks |
-| `retrieval_k` | 5 | 1 - 20 | Number of chunks retrieved per query |
-| `max_context_tokens` | 4000 | 1000 - 8000 | Token budget for assembled context |
-| `prompt_template` | "v1" | v1, v2 | Generation prompt version |
-| `chunk_strategy` | "fixed_size" | fixed_size, recursive_split, semantic | Chunking algorithm |
-
-### Collection Naming
-
-Each unique combination of version + strategy + chunk_size maps to its own ChromaDB collection:
-
-```
-rag_{version}_{strategy}_{chunk_size}
-
-Examples:
-  rag_g1_fixed_size_256    ← default config, Google embeddings
-  rag_g1_fixed_size_64     ← degraded config preset
-  rag_g1_fixed_size_128    ← created by Optimizer when Improver adjusts chunk_size
-```
-
-Collections are **immutable**. Once ingested, they are never modified. A new chunk_size
-produces a new collection with a new name, not an update to the existing one.
-
-### Auto-Ingest
+A Playground baseline preserves the exact query, configuration, and collection
+version that produced it. An explicitly rejected borderline baseline can continue
+into an optimization iteration.
 
 ```mermaid
-flowchart TD
-    A[Graph receives config\nchunk_size changed] --> B[Build collection name\nrag_g1_fixed_size_128]
-    B --> C{Collection\nexists?}
-    C -->|Yes, has chunks| D[Skip ingest\nProceed to retrieval]
-    C -->|Empty or missing| E[Auto-ingest]
-    E --> F[Load corpus pages]
-    F --> G[Chunk with new size]
-    G --> H[Embed chunks]
-    H --> I[Store in ChromaDB]
-    I --> D
+flowchart LR
+   A[Baseline result] --> B{Stop condition?}
+   B -->|Target or safety block| C[Return report]
+   B -->|Continue| D[Apply candidate configuration]
+   D --> E[Invoke graph again]
+   E --> F[Record score and trace]
+   F --> B
 ```
-
-The graph pipeline auto-ingests when it encounters an empty collection. This occurs
-transparently during optimizer runs when the Improver changes `chunk_size`:
-
-1. Improver suggests `chunk_size: 128` (was 256)
-2. Next graph invocation builds collection name: `rag_g1_fixed_size_128`
-3. Collection does not exist → auto-ingest: load corpus → chunk at 128 → embed → store
-4. Retrieval proceeds against the new collection
-
-### Corpus
-
-The default corpus is *Hands-On Large Language Models* by Jay Alammar. Current ingest range:
-
-- **Start page:** 25 (skips overview/preamble content)
-- **Page count:** 25 (pages 25-49)
-- **Content covered:** tokenization, bag-of-words, word2vec, embeddings, RNNs, attention
-  mechanisms, transformers, BERT, GPT, context windows, fine-tuning
-
-### Golden Dataset
-
-Seven test queries with expected answers and retrieval keywords, defined in `ground_truth.py`:
-
-| # | Query | Key Topic |
-|---|-------|-----------|
-| 0 | How do embeddings represent meaning? | Embeddings, vectors, semantic similarity |
-| 1 | What is the attention mechanism? | Attention, token weighting |
-| 2 | What is a transformer? | Transformer architecture |
-| 3 | What is tokenization? | Text splitting into tokens |
-| 4 | What is a context window? | Maximum token limit |
-| 5 | What is fine-tuning? | Adapting pre-trained models |
-| 6 | How does word2vec generate word embeddings? | Word2vec training process |
-
-The golden dataset serves two purposes:
-1. **Correctness scoring**: the Evaluator compares the pipeline's answer to the expected answer
-2. **Retrieval metrics**: keyword presence in retrieved chunks provides precision and recall
-
-[Back to Top](#table-of-contents)
 
 ---
 
-# Chapter 8: Troubleshooting and FAQ
+# Part VI: Observability and Operations
 
-### Common Issues
+## 6.1 Streamlit Interface
 
-| Symptom | Cause | Resolution |
-|---------|-------|------------|
-| `429 RESOURCE_EXHAUSTED` | API rate limit exceeded (15 req/min on free tier) | Wait 60s and retry. Optimizer runs are rate-limit-intensive (4+ LLM calls per iteration). |
-| Score = 0.0 on all metrics, but answer is reasonable | Judge calls failed silently due to rate limiting; scores defaulted to None | Wait for rate limit to reset and re-run the query. |
-| Optimizer shows score regression | Larger chunks on a small corpus produce fewer total chunks; high k retrieves too large a fraction | Expected with small corpora. The bounds (k max=20) and max_context_tokens (4000) are the guardrails. |
-| Collection has 0 chunks | Collection was deleted but not re-ingested | Tab 2 auto-ingests. For Tab 1, use "Initialize Pipeline" to trigger ingestion. |
-| "I don't have enough information" answer | Retrieved chunks do not contain relevant content for the query | Verify the corpus page range covers the topic. Check against the golden dataset queries. |
+| View | Purpose |
+|---|---|
+| Test Playground | Ingest/select a collection, run queries, inspect answers, scores, chunks, and traces. |
+| Optimizer | Start from a golden or custom query and inspect each configuration iteration. |
+| History | Review JSONL-backed query and optimization records. |
 
-### FAQ
+Golden queries receive correctness scoring. Custom queries still receive
+faithfulness, relevance, latency, cost, and applicable retrieval evaluation.
 
-**Q: Why is the graph linear instead of having an internal retry loop?**
+## 6.2 Execution Traces and MLflow
 
-The Optimizer owns retry logic externally. A linear graph is easier to debug (each invocation
-is a pure function), eliminates infinite loop risks, and provides clean separation between
-"evaluate once" and "decide whether to retry."
+Structured trace events capture major pipeline stages. MLflow logs query and
+optimization parameters, metrics, and spans as a parallel experiment view.
+JSONL history remains the lightweight local history store.
 
-**Q: Why are there 5 failure types instead of 6?**
+Start MLflow with SQLite:
 
-F-06 (Quality Drift) detects score degradation over time across production traffic. It
-requires the Observer agent and live monitoring, which are planned for Phase 2. The
-configuration scaffolding (`DRIFT_WINDOW`, `DRIFT_MIN_DROP`) is already in place.
+```bash
+.venv/bin/mlflow ui \
+  --backend-store-uri sqlite:///mlflow.db \
+  --default-artifact-root ./mlartifacts \
+  --port 5000
+```
 
-**Q: Why use keyword-based retrieval metrics instead of LLM-based retrieval evaluation?**
+Start Streamlit with the same tracking URI:
 
-Cost and speed. Keyword precision/recall is free, instant, and sufficient for the retrieval
-component of the unified score. The LLM judges handle the more subjective assessments
-(faithfulness, relevance, correctness).
+```bash
+export MLFLOW_TRACKING_URI=sqlite:///mlflow.db
+.venv/bin/streamlit run frontend/app.py
+```
 
-**Q: What would MLflow replace in this system?**
+Open `http://localhost:5000` for MLflow. If the server is unavailable, the
+application continues and skips MLflow logging.
 
-The current JSONL-based history store (`run_history.py`). MLflow would add: experiment
-grouping, SQL-queryable run history, artifact storage, a web UI for comparing runs, and a
-model registry for promoting validated configurations. The core self-improving logic
-(evaluate → diagnose → improve) is independent of the logging backend. MLflow integration
-is planned for Phase 3.
+## 6.3 Embedding Quotas
 
-**Q: Why does the Improver use a static playbook instead of LLM-generated fixes?**
+A changed chunking configuration creates a new collection and re-embeds the
+corpus. Repeated optimizer experiments can exhaust a provider's embedding quota.
+For a compact demo, use fewer iterations and adjust `retrieval_k` before changing
+chunk settings.
 
-Determinism, safety, and cost. The playbook maps each failure type to exactly 3 ordered
-remediation strategies, guaranteeing: (a) identical diagnoses always produce identical fixes,
-(b) all configuration changes are bounded within safe ranges, and (c) zero additional LLM
-calls per improvement iteration.
+---
 
-**Q: What happens when the Optimizer exhausts all 3 iterations without reaching the target?**
+# Part VII: Configuration, Corpus, and Roadmap
 
-It returns `stop_reason: "max_iterations_reached"` with the best score achieved. The full
-iteration history (configs tried, scores achieved, diagnoses, fixes applied) is available
-for manual review and further tuning decisions.
+## 7.1 Active Configuration
 
-[Back to Top](#table-of-contents)
+| Knob | Default | Purpose |
+|---|---:|---|
+| `chunk_strategy` | `fixed_size` | Fixed-size, recursive, or semantic chunking. |
+| `chunk_size` | 256 | Target chunk size. |
+| `chunk_overlap` | 0 | Shared content between adjacent chunks. |
+| `retrieval_k` | 5 | Number of Chroma results returned. |
+| `max_context_tokens` | 4000 | Context assembly token budget. |
+| `prompt_template` | `v1` | Generation prompt version. |
+
+## 7.2 Golden Dataset
+
+`ground_truth.py` is the authoritative golden dataset. Its comments identify
+medium and hard cross-document tests and their required sources. Use a low
+`retrieval_k` setting to demonstrate a retrieval miss, then compare the next
+Optimizer configuration.
+
+## 7.3 Planned Phase 2 Enhancements
+
+The following are not active stages in the current pipeline:
+
+- Query Rewriter for ambiguous or underspecified questions
+- Hybrid search combining keyword and dense retrieval
+- Reranking before context assembly
+- Context compression for large evidence sets
+- Quality drift detection across sustained production traffic
+
+These features add retrieval-quality levers after the existing evaluation and
+optimization loop has been validated.

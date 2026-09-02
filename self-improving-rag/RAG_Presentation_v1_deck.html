@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Self-Improving RAG — v1</title>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@4/dist/theme/black.css" id="theme">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+
+<!-- Force all slides visible until mermaid renders; removed by JS later -->
+<style id="mermaid-fix">
+  .reveal .slides section { display: block !important; visibility: visible !important; opacity: 1 !important; }
+</style>
+
+<style>
+  :root {
+    --accent: #60a5fa;
+    --accent2: #a78bfa;
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --ink: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #334155;
+  }
+
+  .reveal {
+    font-family: "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+  }
+  .reveal .slides section {
+    text-align: left;
+    padding: 30px 40px;
+    background: var(--bg);
+  }
+
+  /* Lead slides */
+  .reveal .slides section.lead {
+    text-align: center;
+    background: linear-gradient(135deg, #1e3a5f, #2d1b69);
+  }
+  .reveal .slides section.lead h1 {
+    color: white; font-size: 2em; font-weight: 700; margin-bottom: 8px;
+    text-shadow: 0 2px 20px rgba(96,165,250,0.3);
+  }
+  .reveal .slides section.lead h2 {
+    color: var(--accent); font-weight: 400; font-size: 1em; margin-top: 0;
+  }
+  .reveal .slides section.lead p {
+    color: #cbd5e1; font-size: 0.7em; margin-top: 20px;
+  }
+  .reveal .slides section.lead strong { color: white; }
+
+  /* Section headings */
+  .reveal h2.section-title {
+    font-size: 1.05em;
+    font-weight: 600;
+    color: var(--accent);
+    border-bottom: 2px solid var(--surface2);
+    padding-bottom: 10px;
+    margin-top: 0;
+    margin-bottom: 16px;
+  }
+  .reveal h3 {
+    color: var(--accent2);
+    font-size: 0.65em;
+    font-weight: 500;
+    margin-top: 14px;
+    margin-bottom: 6px;
+  }
+
+  /* Body text */
+  .reveal p, .reveal li {
+    line-height: 1.55;
+    color: var(--ink);
+    font-size: 0.55em;
+    font-weight: 300;
+  }
+  .reveal strong { color: white; font-weight: 600; }
+  .reveal .muted { color: var(--muted); }
+
+  /* Tables */
+  .reveal table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 0.45em;
+  }
+  .reveal th, .reveal td {
+    border: 1px solid var(--surface2);
+    padding: 7px 10px;
+    text-align: left;
+    vertical-align: top;
+  }
+  .reveal th {
+    background: var(--surface);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .reveal td { color: var(--ink); }
+  .reveal td strong { color: var(--accent2); }
+
+  /* Blockquote */
+  .reveal blockquote {
+    border-left: 3px solid var(--accent);
+    margin: 14px 0;
+    padding: 8px 18px;
+    background: var(--surface);
+    border-radius: 0 8px 8px 0;
+    font-style: normal;
+    font-size: 0.5em;
+    width: 100%;
+    box-shadow: none;
+    color: var(--ink);
+  }
+
+  /* Mermaid */
+  .mermaid {
+    display: flex;
+    justify-content: center;
+    margin: 10px 0;
+  }
+
+  /* Code / formula */
+  .reveal pre.formula {
+    background: var(--surface);
+    color: var(--accent);
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--surface2);
+    overflow-x: auto;
+    font-size: 0.45em;
+    box-shadow: none;
+    width: auto;
+  }
+  .reveal code {
+    background: var(--surface);
+    color: var(--accent);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.9em;
+  }
+  .reveal pre.formula code { background: none; color: inherit; padding: 0; }
+
+  /* Badge */
+  .reveal .badge {
+    display: inline-block;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    color: var(--bg);
+    border-radius: 6px;
+    padding: 2px 12px;
+    font-size: 0.38em;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  /* Key message arrows */
+  .reveal .key-message .arrow { color: var(--accent); font-weight: 600; }
+
+  /* Progress bar & controls */
+  .reveal .progress { color: var(--accent); height: 4px; }
+  .reveal .controls { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="reveal">
+  <div class="slides">
+
+    <section class="lead">
+      <h1>Self-Improving RAG</h1>
+      <h2>From Retrieval to Continuous Optimization</h2>
+      <p>Traditional RAG → RAG failures → Manual trial-and-error → <strong>Self-Improving RAG</strong></p>
+    </section>
+
+    <section>
+      <span class="badge">1 — Purpose</span>
+      <h2 class="section-title">What is RAG?</h2>
+      <p>A RAG (Retrieval-Augmented Generation) pipeline answers questions by retrieving
+      relevant text from documents and passing it to a language model to generate a
+      grounded answer. Getting one working is easy. Getting one that retrieves the
+      right passages, does not hallucinate, and stays reliable normally takes manual
+      tuning.</p>
+      <p>RAG quality is <strong>not</strong> decided by the LLM alone — it depends on two pipelines
+      working together: how documents are prepared for search (<strong>ingestion</strong>), and
+      how relevant evidence is found and handed to the LLM (<strong>retrieval</strong>).</p>
+    </section>
+
+    <section>
+      <span class="badge">1 — Purpose</span>
+      <h2 class="section-title">Ingestion vs. Retrieval</h2>
+
+      <h3>Ingestion Pipeline <span class="muted">(offline, once per document set)</span></h3>
+      <div class="mermaid">
+flowchart LR
+    D[Documents] --> P[Parsing]
+    P --> C[Chunking]
+    C --> E[Embeddings]
+    E --> V[Vector Store]
+      </div>
+
+      <h3>Retrieval Pipeline <span class="muted">(online, once per query)</span></h3>
+      <div class="mermaid">
+flowchart LR
+    Q[User Query] --> QE[Embed Query]
+    QE --> R[Retrieve Top-k Chunks]
+    R --> RR[Rerank]
+    RR --> CTX[Assemble Context]
+    CTX --> G[LLM Generation]
+    G --> A[Answer]
+      </div>
+
+      <p>Ingestion runs <strong>once per document set</strong> (offline). Retrieval runs <strong>once per query</strong> (online) — but it depends entirely on what ingestion produced.</p>
+    </section>
+
+    <section>
+      <span class="badge">1 — Purpose</span>
+      <h2 class="section-title">Where It Works, Where It Fails</h2>
+      <table>
+        <tr><th>Stage</th><th>Works well when</th><th>Fails when</th></tr>
+        <tr>
+          <td><strong>Ingestion</strong></td>
+          <td>Clean parsing, sensible chunk boundaries, embeddings match the domain</td>
+          <td>Poor parsing, chunk size too small/large, context split across chunks, poor metadata, embedding/model mismatch, missing documents</td>
+        </tr>
+        <tr>
+          <td><strong>Retrieval</strong></td>
+          <td>Query is well-formed, top-k is tuned, reranking/hybrid search is effective</td>
+          <td>Poor query formulation, wrong top-k, relevant chunks not retrieved, too many irrelevant chunks, ineffective hybrid config</td>
+        </tr>
+        <tr>
+          <td><strong>Generation</strong></td>
+          <td>Context is sufficient and relevant, prompt is clear</td>
+          <td>Answer not grounded in context, hallucination, incomplete answer, LLM misreads context, prompt/config problems</td>
+        </tr>
+      </table>
+      <blockquote><strong>A RAG failure can happen almost anywhere</strong> — from ingestion all the way through retrieval and generation. This is why Self-Improving RAG evaluates and can adjust configuration at every one of these stages, not just the prompt.</blockquote>
+    </section>
+
+    <section>
+      <span class="badge">2 — The Problem</span>
+      <h2 class="section-title">Why RAG Optimization Is Difficult</h2>
+      <p>Manual experimentation, repeated for every lever — chunk size, retrieval strategy, reranker, prompt/top-K — each one its own <strong>change → re-ingest/re-run → test → compare</strong> cycle:</p>
+
+      <div class="mermaid">
+flowchart LR
+    A[Change a config lever] --> B[Re-ingest / Re-run] --> C[Test queries] --> D[Evaluate and Compare]
+      </div>
+
+      <p><strong>Cycle:</strong> Hypothesis → Configuration Change → Re-ingestion/Execution → Evaluation → Comparison</p>
+
+      <p><strong>The problem</strong> — expensive in time and compute/LLM cost, and hard to answer:</p>
+      <ul>
+        <li>Which part of the system caused the failure? Which config should change?</li>
+        <li>Did the change actually improve quality — or just shift the cost/latency trade-off?</li>
+        <li>Which configuration should we keep? When do we stop optimizing?</li>
+      </ul>
+      <p>Self-Improving RAG replaces this manual cycle with the closed-loop system below.</p>
+    </section>
+
+    <section>
+      <span class="badge">3 — Architecture</span>
+      <h2 class="section-title">End-to-End Flow</h2>
+      <div class="mermaid">
+flowchart LR
+    A[Ingest and Index] --> B[Retrieve Evidence]
+    B --> C[Assemble Context and Generate]
+    C --> D[Evaluate Quality]
+    D --> E{Quality Gate}
+    E -->|"Score at least 0.85"| F[Deploy]
+    E -->|"Score 0.70 to 0.85"| G[Human Review]
+    E -->|"Below 0.70 or Faith below 0.50"| H[Diagnose]
+    G -->|Approve| F
+    G -->|Reject| H
+    H --> I[Propose Config Fix]
+    I --> J[Optimizer Re-runs]
+    J --> B
+    D -. Metrics .-> K[MLflow]
+      </div>
+      <p>The evaluation-to-optimization loop is the central capability: a low-quality result becomes an observable, repeatable configuration experiment instead of trial and error.</p>
+    </section>
+
+    <section>
+      <span class="badge">4 — Evaluator Agent</span>
+      <h2 class="section-title">The Evaluator Agent — Zoomed In</h2>
+      <p class="muted" style="font-size:0.42em;"><em>From Self_Improving_RAG_Guide.md, Part IV — verified against evaluator.py / pipeline.py / utils.py.</em></p>
+      <div class="mermaid">
+flowchart LR
+   A[Answer and Context] --> Bx[Faithfulness judge]
+   A --> C[Relevance judge]
+   A --> Dx[Correctness judge]
+   Ex[Retrieved chunks] --> F[Retrieval metrics]
+   Bx --> G[Unified score]
+   C --> G
+   Dx --> G
+   F --> G
+   G --> H{Quality gate}
+   H -->|Pass| I[Deploy]
+   H -->|Borderline| J[Human review]
+   H -->|Fail or veto| K[Diagnosis]
+      </div>
+    </section>
+
+    <section>
+      <span class="badge">4 — Evaluator Agent</span>
+      <h2 class="section-title">Worked Example</h2>
+      <table>
+        <tr><th>Signal</th><th>What it means</th><th>Value</th></tr>
+        <tr><td>Retrieval recall</td><td>Did retrieval find the chunks needed to answer the question?</td><td>0.90</td></tr>
+        <tr><td>Relevance</td><td>Does the answer address the question asked?</td><td>0.95</td></tr>
+        <tr><td>Correctness</td><td>Does the answer match the expected ground-truth answer?</td><td>0.92</td></tr>
+        <tr><td>Quality = 0.6 × Correctness + 0.4 × Relevance</td><td>Blended answer-quality sub-score</td><td>0.932</td></tr>
+        <tr><td>Faithfulness</td><td>Are the answer's claims supported by the retrieved context?</td><td>0.90</td></tr>
+        <tr><td>Latency</td><td>How long the generation call took</td><td>600 ms → penalty 0.020</td></tr>
+        <tr><td>Cost</td><td>LLM generation cost for this query</td><td>$0.002 → penalty 0.010</td></tr>
+      </table>
+
+      <pre class="formula">Unified Score = 0.25 × 0.90 + 0.35 × 0.932 + 0.25 × 0.90 − 0.020 − 0.010
+              = 0.225 + 0.3262 + 0.225 − 0.030
+              ≈ 0.746</pre>
+
+      <p><strong>Gate decision:</strong> Faithfulness 0.90 ≥ 0.50 (no veto) and Score 0.746 falls in <strong>[0.70, 0.85)</strong> → <strong><code>hitl_required</code></strong> (human review).</p>
+    </section>
+
+    <section class="lead key-message">
+      <h2 style="margin-top:0; color:white; font-size:1.4em;">Key Message</h2>
+      <p style="font-size:0.65em;">Traditional RAG: <strong>Build → Test → Manually Tune → Repeat</strong></p>
+      <p style="font-size:0.65em;">Self-Improving RAG: <strong>Build <span class="arrow">→</span> Evaluate <span class="arrow">→</span> Diagnose <span class="arrow">→</span> Optimize <span class="arrow">→</span> Re-evaluate <span class="arrow">→</span> Accept the Best Configuration</strong></p>
+      <p style="font-size:0.65em;">RAG quality becomes something that can be <strong>measured, analyzed, and continuously improved — while balancing cost and latency.</strong></p>
+    </section>
+
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/reveal.js@4/dist/reveal.js"></script>
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    securityLevel: "loose",
+    theme: "base",
+    themeVariables: {
+      primaryColor: "#1e3a5f",
+      primaryTextColor: "#e2e8f0",
+      primaryBorderColor: "#60a5fa",
+      lineColor: "#60a5fa",
+      secondaryColor: "#2d1b69",
+      tertiaryColor: "#1e293b",
+      fontFamily: "Inter, Segoe UI, sans-serif",
+      fontSize: "14px",
+      nodeBorder: "#60a5fa",
+      mainBkg: "#1e293b",
+      clusterBkg: "#334155",
+      edgeLabelBackground: "#0f172a"
+    }
+  });
+
+  // After mermaid finishes, remove the visibility override and init reveal.js
+  window.addEventListener("load", function () {
+    // Give mermaid extra time to finish all SVG rendering
+    setTimeout(function () {
+      // Remove the override so reveal.js can control slide visibility
+      var fix = document.getElementById("mermaid-fix");
+      if (fix) fix.remove();
+
+      Reveal.initialize({
+        width: 1100,
+        height: 700,
+        margin: 0.04,
+        minScale: 0.2,
+        maxScale: 1.5,
+        hash: true,
+        controls: true,
+        progress: true,
+        transition: "slide",
+        transitionSpeed: "default",
+        backgroundTransition: "fade",
+      });
+    }, 1500);
+  });
+</script>
+</body>
+</html>
